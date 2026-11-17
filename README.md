@@ -36,4 +36,29 @@ orden de trabajo, checklist, materiales, fotos, firma del cliente y envío a la 
 
 ## Cómo ejecutar el proyecto
 
-Se completará cuando la base del frontend y del backend esté lista.
+Se necesitan dos terminales abiertas a la vez.
+
+**Primera vez en cada computador** (una sola vez):
+
+    cd server
+    npm install
+    cd ../client
+    npm install
+
+**Terminal 1: servidor (API)**
+
+    cd server
+    npm run dev
+
+Debe decir `Servidor escuchando en http://localhost:3000`.
+Prueba: abrir http://localhost:3000/api/v1/health en el navegador.
+
+**Terminal 2: pantalla (frontend)**
+
+    cd client
+    npm run dev
+
+Abrir http://localhost:5173. Debe verse "API de Gamma funcionando" en verde.
+Si sale en rojo, el servidor (terminal 1) está apagado.
+
+Nota: `node_modules` no se sube a GitHub; por eso hace falta `npm install`.
