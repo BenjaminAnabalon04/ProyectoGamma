@@ -70,8 +70,8 @@ Archivos: `server/src/routes/`, `server/src/controllers/`, `server/src/middlewar
 
 - [x] **B1. Verificación del token (JWT)**: `server/src/middleware/auth.js`. Revisa el token en cada petición protegida y deja los datos del usuario disponibles (401 si es inválido). Bloquea a las demás rutas protegidas. Instalar `jsonwebtoken`; la clave secreta va en `.env` como `JWT_SECRET` (agregar también a `.env.example`).
 - [x] **B2. HU-01 Login**: `auth.routes.js` y `auth.controller.js`. Buscar el usuario por RUT, comparar la contraseña con `bcryptjs` (instalar; las contraseñas de prueba ya están guardadas con bcrypt), mensaje genérico si falla, bloqueo de 15 minutos tras 5 intentos (`intentos_fallidos` y `bloqueado_hasta`). Pruebas: F-01, F-02, S-01.
-- [ ] **B3. HU-02 Mis trabajos**: `ordenes.routes.js` y `ordenes.controller.js`. Solo las órdenes de las asignaciones activas del técnico que hizo la petición. Pruebas: F-03 (Carlos ve 3, Roberto 2), S-04.
-- [ ] **B4. HU-03 Iniciar y finalizar servicio**: `servicios.routes.js` y `servicios.controller.js`. Crear la hoja con el UUID que manda el celular, elegir el checklist según el tipo de servicio, y bloquear el cierre si falta un ítem obligatorio (RF-12). Pruebas: F-04, F-05.
+- [x] **B3. HU-02 Mis trabajos**: `ordenes.routes.js` y `ordenes.controller.js`. Solo las órdenes de las asignaciones activas del técnico que hizo la petición. Pruebas: F-03 (Carlos ve 3, Roberto 2), S-04.
+- [x] **B4. HU-03 Iniciar y finalizar servicio**: `servicios.routes.js` y `servicios.controller.js`. Crear la hoja con el UUID que manda el celular, elegir el checklist según el tipo de servicio, y bloquear el cierre si falta un ítem obligatorio (RF-12). Pruebas: F-04, F-05.
 - [ ] **B5. HU-07 Enviar al ERP**: en `servicios.controller.js`. Reunir la hoja con respuestas, consumos y evidencias, enviarla al ERP simulado (dirección en `.env` como `ERP_URL`), actualizar `estado_envio_erp`, y si falla permitir reintentar sin duplicar (RF-13). Depende de D1. Prueba: F-10.
 - [ ] **B6. HU-08 Presupuestos** (solo si hay tiempo): `presupuestos.routes.js`. El técnico no ve precios ni aprueba. Prueba: F-11.
 
@@ -79,8 +79,8 @@ Archivos: `server/src/routes/`, `server/src/controllers/`, `server/src/middlewar
 
 Archivos: `database/`, `erp-mock/`, y las rutas de checklists, materiales y evidencias.
 
-- [ ] **D1. ERP simulado**: carpeta `erp-mock/` (proyecto Node propio: `npm init`, `npm install express`). Puerto 4000. `POST /erp/servicios` responde `{ recibido: true, codigo_hoja_erp }`. Una variable (por ejemplo `FALLAR=1`) hace que responda error, para probar el reintento. Agregar su guía de uso al README.
-- [ ] **D2. HU-04 Checklist**: `checklists.routes.js` y `checklists.controller.js`: entregar la plantilla y guardar las respuestas. Prueba: F-06.
+- [x] **D1. ERP simulado**: carpeta `erp-mock/` (proyecto Node propio: `npm init`, `npm install express`). Puerto 4000. `POST /erp/servicios` responde `{ recibido: true, codigo_hoja_erp }`. Una variable (por ejemplo `FALLAR=1`) hace que responda error, para probar el reintento. Agregar su guía de uso al README.
+- [x] **D2. HU-04 Checklist**: `checklists.routes.js` y `checklists.controller.js`: entregar la plantilla y guardar las respuestas. Prueba: F-06.
 - [ ] **D3. HU-05 Materiales**: `materiales.routes.js`: buscar en el catálogo y registrar consumos (cantidad mayor que 0). Prueba: F-07.
 - [ ] **D4. HU-05 y HU-06 Evidencias**: `evidencias.routes.js`: recibir la imagen, guardarla en una carpeta `server/uploads/` (agregarla al `.gitignore`: archivo compartido, avisar) y registrar `clave_archivo` en la tabla `evidencia`. Validar tipo y tamaño del archivo (S-09). Pruebas: F-08, F-09.
 - [ ] **D5. Dueño del esquema**: solo esta área edita `database/schema.sql` y `seed.sql`. Cambios: pedirlos en el chat; después todos ejecutan `npm run db:reset`.
