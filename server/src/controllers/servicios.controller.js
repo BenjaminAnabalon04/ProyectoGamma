@@ -169,4 +169,119 @@ async function finalizar(req, res) {
   }
 }
 
-module.exports = { iniciar, finalizar };
+//
+// POST /api/v1/servicios/:id_hoja/enviar  -> envía la hoja finalizada al ERP.
+async function enviar(req, res) {
+  const { id_hoja } = req.params;
+
+  if (!UUID_REGEX.test(String(id_hoja))) {
+    return res.status(400).json({ mensaje: 'id_hoja debe ser un UUID válido' });
+  }
+
+  try {
+    const hojaRes = await db.query(
+      `SELECT hs.id_hoja, hs.fecha_inicio, hs.fecha_fin, hs.horometro_servicio,
+              hs.actividades, hs.observaciones_tecnicas, hs.resultado,
+              hs.estado_servicio, hs.estado_envio_erp,
+              a.id_tecnico, ot.codigo_orden_erp, ot.titulo
+         FROM hoja_servicio hs
+         JOIN asignacion a ON a.id_asignacion = hs.id_asignacion
+         JOIN orden_trabajo ot ON ot.id_orden = a.id_orden
+        WHERE hs.id_hoja = $1`,
+      [id_hoja]
+    );
+    const hoja = hojaRes.rows[0];
+
+    if (!hoja || Number(hoja.id_tecnico) !== req.usuario.id_usuario) {
+      return res.status(404).json({ mensaje: 'Hoja de servicio no encontrada' });
+    }
+
+    if (hoja.estado_servicio !== 'FINALIZADO') {
+      return res.status(409).json({ mensaje: 'Solo se puede enviar un servicio finalizado' });
+    }
+
+    // Si ya se envió, no se manda otra vez (así un reintento no duplica).
+    if (hoja.estado_envio_erp === 'ENVIADO' || hoja.estado_envio_erp === 'SINCRONIZADO') {
+      return res.json({ estado_envio_erp: hoja.estado_envio_erp });
+    }
+
+    const respuestas = await db.query(
+      `SELECT id_item, pregunta_texto, resultado, observacion
+         FROM respuesta_checklist
+        WHERE id_hoja = $1
+        ORDER BY id_item`,
+      [id_hoja]
+    );
+
+    const consumos = await db.query(
+      `SELECT m.codigo_material_erp, m.nombre, cm.cantidad, m.unidad_medida
+         FROM consumo_material cm
+         JOIN material m ON m.id_material = cm.id_material
+        WHERE cm.id_hoja = $1`,
+      [id_hoja]
+    );
+
+    // Solo los datos de cada evidencia, no la imagen en sí.
+    const evidencias = await db.query(
+      `SELECT tipo, clave_archivo, formato, fecha_captura, latitud, longitud,
+              nombre_firmante, rut_firmante
+         FROM evidencia
+        WHERE id_hoja = $1`,
+      [id_hoja]
+    );
+
+    const paquete = {
+      id_hoja: hoja.id_hoja,
+      codigo_orden_erp: hoja.codigo_orden_erp,
+      titulo: hoja.titulo,
+      fecha_inicio: hoja.fecha_inicio,
+      fecha_fin: hoja.fecha_fin,
+      horometro_servicio: hoja.horometro_servicio,
+      actividades: hoja.actividades,
+      observaciones_tecnicas: hoja.observaciones_tecnicas,
+      resultado: hoja.resultado,
+      respuestas: respuestas.rows,
+      consumos: consumos.rows,
+      evidencias: evidencias.rows,
+    };
+
+    let respuestaErp;
+    try {
+      const resp = await fetch(`${process.env.ERP_URL}/erp/servicios`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(paquete),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (!resp.ok) {
+        throw new Error(`El ERP respondió ${resp.status}`);
+      }
+      respuestaErp = await resp.json();
+    } catch (errorErp) {
+      console.error('Error al enviar al ERP:', errorErp.message);
+      await db.query(
+        "UPDATE hoja_servicio SET estado_envio_erp = 'ERROR' WHERE id_hoja = $1",
+        [id_hoja]
+      );
+      return res.status(502).json({
+        mensaje: 'No se pudo enviar al ERP. Puedes reintentar.',
+        estado_envio_erp: 'ERROR',
+      });
+    }
+
+    await db.query(
+      "UPDATE hoja_servicio SET estado_envio_erp = 'ENVIADO' WHERE id_hoja = $1",
+      [id_hoja]
+    );
+
+    res.json({
+      estado_envio_erp: 'ENVIADO',
+      codigo_hoja_erp: respuestaErp.codigo_hoja_erp,
+    });
+  } catch (error) {
+    console.error('Error al enviar servicio:', error.message);
+    res.status(500).json({ mensaje: 'No se pudo enviar el servicio' });
+  }
+}
+
+module.exports = { iniciar, finalizar, enviar };
