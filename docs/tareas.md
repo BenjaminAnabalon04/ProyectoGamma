@@ -72,7 +72,7 @@ Archivos: `server/src/routes/`, `server/src/controllers/`, `server/src/middlewar
 - [x] **B2. HU-01 Login**: `auth.routes.js` y `auth.controller.js`. Buscar el usuario por RUT, comparar la contraseña con `bcryptjs` (instalar; las contraseñas de prueba ya están guardadas con bcrypt), mensaje genérico si falla, bloqueo de 15 minutos tras 5 intentos (`intentos_fallidos` y `bloqueado_hasta`). Pruebas: F-01, F-02, S-01.
 - [x] **B3. HU-02 Mis trabajos**: `ordenes.routes.js` y `ordenes.controller.js`. Solo las órdenes de las asignaciones activas del técnico que hizo la petición. Pruebas: F-03 (Carlos ve 3, Roberto 2), S-04.
 - [x] **B4. HU-03 Iniciar y finalizar servicio**: `servicios.routes.js` y `servicios.controller.js`. Crear la hoja con el UUID que manda el celular, elegir el checklist según el tipo de servicio, y bloquear el cierre si falta un ítem obligatorio (RF-12). Pruebas: F-04, F-05.
-- [ ] **B5. HU-07 Enviar al ERP**: en `servicios.controller.js`. Reunir la hoja con respuestas, consumos y evidencias, enviarla al ERP simulado (dirección en `.env` como `ERP_URL`), actualizar `estado_envio_erp`, y si falla permitir reintentar sin duplicar (RF-13). Depende de D1. Prueba: F-10.
+- [x] **B5. HU-07 Enviar al ERP**: en `servicios.controller.js`. Reunir la hoja con respuestas, consumos y evidencias, enviarla al ERP simulado (dirección en `.env` como `ERP_URL`), actualizar `estado_envio_erp`, y si falla permitir reintentar sin duplicar (RF-13). Depende de D1. Prueba: F-10.
 - [ ] **B6. HU-08 Presupuestos** (solo si hay tiempo): `presupuestos.routes.js`. El técnico no ve precios ni aprueba. Prueba: F-11.
 
 ## Datos / Integración (responsable: ______________  apoyo: ______________)
