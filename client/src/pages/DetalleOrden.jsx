@@ -1,53 +1,74 @@
-import { useState } from 'react';
-import { useLocation, useNavigate } from 'react-router-dom';
-import { pedir } from '../api/api';
-
 // Desarrollado por: Robert Ramírez
+
+import { useEffect, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { obtenerToken, pedir } from '../api/api';
+
+function leerOrden(location) {
+  return location.state?.orden || JSON.parse(localStorage.getItem('orden_actual') || 'null');
+}
+
+function leerHoja(orden) {
+  const guardada = JSON.parse(localStorage.getItem('hoja_actual') || 'null');
+  return guardada && orden && guardada.id_asignacion === orden.id_asignacion ? guardada : null;
+}
+
 export default function DetalleOrden() {
   const location = useLocation();
   const navigate = useNavigate();
-
-  const token = localStorage.getItem('token');
-  const orden =
-    location.state?.orden ||
-    JSON.parse(localStorage.getItem('orden_actual') || 'null');
-
-  const [hoja, setHoja] = useState(() => {
-    const guardada = JSON.parse(localStorage.getItem('hoja_actual') || 'null');
-    if (guardada && orden && guardada.id_asignacion === orden.id_asignacion) {
-      return guardada;
-    }
-    return null;
-  });
-
+  const token = obtenerToken();
+  const [orden] = useState(() => leerOrden(location));
+  const [hoja, setHoja] = useState(() => leerHoja(leerOrden(location)));
   const [horometro, setHorometro] = useState('');
   const [actividades, setActividades] = useState('');
   const [observaciones, setObservaciones] = useState('');
-  const [resultado, setResultado] = useState('operativo');
+  const [resultado, setResultado] = useState('OPERATIVO');
   const [mensaje, setMensaje] = useState('');
   const [error, setError] = useState('');
   const [cargando, setCargando] = useState(false);
+  const pendienteLocal = hoja?.pendiente;
 
-  if (!token) {
-    navigate('/login');
-    return null;
-  }
+  useEffect(() => {
+    if (!orden) {
+      navigate('/mis-trabajos', { replace: true });
+    }
+  }, [orden, navigate]);
 
-  if (!orden) {
-    return (
-      <main className="pantalla">
-        <h1>Detalle de la orden</h1>
-        <p className="error">No hay una orden seleccionada.</p>
-        <button
-          type="button"
-          className="boton"
-          onClick={() => navigate('/mis-trabajos')}
-        >
-          Volver a mis trabajos
-        </button>
-      </main>
-    );
-  }
+  useEffect(() => {
+    if (!hoja?.id_hoja) return;
+
+    let activo = true;
+    async function sincronizar() {
+      try {
+        const datos = await pedir(`/servicios/${hoja.id_hoja}`, { token });
+        if (!activo) return;
+        const actualizada = {
+          ...datos,
+          id_asignacion: orden.id_asignacion,
+          pendiente: pendienteLocal,
+        };
+        setHoja(actualizada);
+        localStorage.setItem('hoja_actual', JSON.stringify(actualizada));
+        setActividades(datos.actividades || '');
+        setObservaciones(datos.observaciones_tecnicas || '');
+        setHorometro(datos.horometro_servicio ?? '');
+        if (datos.resultado) setResultado(datos.resultado);
+      } catch (err) {
+        if (!activo) return;
+        if (err.estado === 404) {
+          localStorage.removeItem('hoja_actual');
+          setHoja(null);
+        }
+      }
+    }
+
+    void sincronizar();
+    return () => {
+      activo = false;
+    };
+  }, [hoja?.id_hoja, pendienteLocal, orden, token]);
+
+  if (!orden) return null;
 
   async function iniciarServicio() {
     setError('');
@@ -55,23 +76,16 @@ export default function DetalleOrden() {
     setCargando(true);
 
     try {
-      const id_hoja = crypto.randomUUID();
+      const idHoja = crypto.randomUUID();
       const datos = await pedir('/servicios', {
         metodo: 'POST',
         token,
-        cuerpo: {
-          id_hoja,
-          id_asignacion: orden.id_asignacion,
-        },
+        cuerpo: { id_hoja: idHoja, id_asignacion: orden.id_asignacion },
       });
-
-      const nuevaHoja = {
-        ...datos,
-        id_asignacion: orden.id_asignacion,
-      };
+      const nuevaHoja = { ...datos, id_asignacion: orden.id_asignacion };
       setHoja(nuevaHoja);
       localStorage.setItem('hoja_actual', JSON.stringify(nuevaHoja));
-      setMensaje('Servicio iniciado correctamente.');
+      setMensaje(datos.pendiente ? 'Servicio registrado; se enviará al reconectar.' : 'Servicio iniciado correctamente.');
     } catch (err) {
       setError(err.message || 'No se pudo iniciar el servicio.');
     } finally {
@@ -79,8 +93,8 @@ export default function DetalleOrden() {
     }
   }
 
-  async function finalizarServicio(e) {
-    e.preventDefault();
+  async function finalizarServicio(evento) {
+    evento.preventDefault();
     if (!hoja?.id_hoja) return;
 
     setError('');
@@ -92,19 +106,21 @@ export default function DetalleOrden() {
         metodo: 'PUT',
         token,
         cuerpo: {
-          horometro_servicio: horometro ? Number(horometro) : null,
+          horometro_servicio: horometro === '' ? null : Number(horometro),
           actividades,
           observaciones_tecnicas: observaciones,
           resultado,
         },
       });
-
-      const hojaFinalizada = { ...hoja, estado_servicio: 'FINALIZADO' };
-      setHoja(hojaFinalizada);
-      localStorage.setItem('hoja_actual', JSON.stringify(hojaFinalizada));
+      const finalizada = { ...hoja, estado_servicio: 'FINALIZADO' };
+      setHoja(finalizada);
+      localStorage.setItem('hoja_actual', JSON.stringify(finalizada));
       setMensaje('Servicio finalizado. Puedes continuar al resumen y envío.');
     } catch (err) {
       setError(err.message || 'Faltan datos obligatorios para finalizar.');
+      if (err.datos?.faltantes?.length) {
+        setError(`${err.message}: ${err.datos.faltantes.join(', ')}`);
+      }
     } finally {
       setCargando(false);
     }
@@ -113,119 +129,86 @@ export default function DetalleOrden() {
   return (
     <main className="pantalla">
       <h1>{orden.codigo_orden_erp}</h1>
-      <p><strong>{orden.titulo}</strong></p>
-      <p>Tipo: {orden.tipo_servicio} | Prioridad: {orden.prioridad}</p>
-      {orden.cliente && <p>Cliente: {orden.cliente}</p>}
-      {orden.equipo && <p>Equipo: {orden.equipo}</p>}
-      <p>
-        Estado del servicio:{' '}
-        <strong>{hoja ? hoja.estado_servicio : orden.estado}</strong>
-      </p>
+      <div className="tarjeta">
+        <p><strong>{orden.titulo}</strong></p>
+        <p>Tipo: {orden.tipo_servicio} · Prioridad: {orden.prioridad}</p>
+        {orden.cliente && <p>Cliente: {orden.cliente}</p>}
+        {orden.equipo && <p>Equipo: {orden.equipo}</p>}
+        <p>Estado del servicio: <strong>{hoja ? hoja.estado_servicio : orden.estado}</strong></p>
+        {hoja?.pendiente && <p className="alerta">Cambios pendientes de sincronización.</p>}
+      </div>
 
-      {mensaje && (
-        <p className="ok" role="status">
-          {mensaje}
-        </p>
-      )}
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
+      {mensaje && <p className="ok" role="status">{mensaje}</p>}
+      {error && <p className="error" role="alert">{error}</p>}
 
       {!hoja && (
-        <button
-          type="button"
-          className="boton"
-          onClick={iniciarServicio}
-          disabled={cargando}
-        >
+        <button type="button" className="boton" onClick={iniciarServicio} disabled={cargando}>
           {cargando ? 'Iniciando...' : 'Iniciar servicio'}
         </button>
       )}
 
       {hoja && hoja.estado_servicio !== 'FINALIZADO' && (
-        <div>
+        <>
           <p>
             Inicio registrado:{' '}
-            {hoja.fecha_inicio
-              ? new Date(hoja.fecha_inicio).toLocaleString()
-              : 'En curso'}
+            {hoja.fecha_inicio ? new Date(hoja.fecha_inicio).toLocaleString() : 'En curso'}
           </p>
 
-          <button
-            type="button"
-            className="boton"
-            onClick={() => navigate('/checklist-insumos')}
-          >
-            Ir a checklist y materiales
-          </button>
+          <div className="botonera">
+            <button type="button" className="boton" onClick={() => navigate('/checklist-insumos')}>
+              Checklist y materiales
+            </button>
+            <button type="button" className="boton" onClick={() => navigate('/evidencias-firma')}>
+              Fotos y firma
+            </button>
+          </div>
 
-          <button
-            type="button"
-            className="boton"
-            onClick={() => navigate('/evidencias-firma')}
-          >
-            Ir a fotos y firma
-          </button>
-
-          <form onSubmit={finalizarServicio} style={{ marginTop: '20px' }}>
+          <form onSubmit={finalizarServicio} className="tarjeta">
             <h2>Cerrar servicio</h2>
 
-            <div style={{ marginBottom: '12px' }}>
-              <label htmlFor="horometro" className="etiqueta">
-                Horómetro del equipo
-              </label>
+            <div className="campo">
+              <label htmlFor="horometro" className="etiqueta">Horómetro del equipo</label>
               <input
                 id="horometro"
                 type="number"
                 step="0.1"
+                min="0"
                 value={horometro}
-                onChange={(e) => setHorometro(e.target.value)}
-                style={{ width: '100%', minHeight: '48px', padding: '10px', fontSize: '18px', marginTop: '6px' }}
+                onChange={(evento) => setHorometro(evento.target.value)}
               />
             </div>
 
-            <div style={{ marginBottom: '12px' }}>
-              <label htmlFor="actividades" className="etiqueta">
-                Actividades realizadas
-              </label>
+            <div className="campo">
+              <label htmlFor="actividades" className="etiqueta">Actividades realizadas</label>
               <textarea
                 id="actividades"
                 rows="3"
                 value={actividades}
-                onChange={(e) => setActividades(e.target.value)}
+                onChange={(evento) => setActividades(evento.target.value)}
                 required
-                style={{ width: '100%', padding: '10px', fontSize: '18px', marginTop: '6px' }}
               />
             </div>
 
-            <div style={{ marginBottom: '12px' }}>
-              <label htmlFor="observaciones" className="etiqueta">
-                Observaciones técnicas
-              </label>
+            <div className="campo">
+              <label htmlFor="observaciones" className="etiqueta">Observaciones técnicas</label>
               <textarea
                 id="observaciones"
                 rows="3"
                 value={observaciones}
-                onChange={(e) => setObservaciones(e.target.value)}
-                style={{ width: '100%', padding: '10px', fontSize: '18px', marginTop: '6px' }}
+                onChange={(evento) => setObservaciones(evento.target.value)}
               />
             </div>
 
-            <div style={{ marginBottom: '12px' }}>
-              <label htmlFor="resultado" className="etiqueta">
-                Resultado
-              </label>
+            <div className="campo">
+              <label htmlFor="resultado" className="etiqueta">Resultado</label>
               <select
                 id="resultado"
                 value={resultado}
-                onChange={(e) => setResultado(e.target.value)}
-                style={{ width: '100%', minHeight: '48px', padding: '10px', fontSize: '18px', marginTop: '6px' }}
+                onChange={(evento) => setResultado(evento.target.value)}
               >
-                <option value="operativo">Operativo</option>
-                <option value="requiere_seguimiento">Requiere seguimiento</option>
-                <option value="fuera_de_servicio">Fuera de servicio</option>
+                <option value="OPERATIVO">Operativo</option>
+                <option value="REQUIERE_SEGUIMIENTO">Requiere seguimiento</option>
+                <option value="FUERA_DE_SERVICIO">Fuera de servicio</option>
               </select>
             </div>
 
@@ -233,24 +216,16 @@ export default function DetalleOrden() {
               {cargando ? 'Finalizando...' : 'Finalizar servicio'}
             </button>
           </form>
-        </div>
+        </>
       )}
 
       {hoja && hoja.estado_servicio === 'FINALIZADO' && (
-        <button
-          type="button"
-          className="boton"
-          onClick={() => navigate('/resumen')}
-        >
+        <button type="button" className="boton" onClick={() => navigate('/resumen')}>
           Ir a resumen y envío
         </button>
       )}
 
-      <button
-        type="button"
-        className="boton"
-        onClick={() => navigate('/mis-trabajos')}
-      >
+      <button type="button" className="boton boton-secundario" onClick={() => navigate('/mis-trabajos')}>
         Volver a mis trabajos
       </button>
     </main>
