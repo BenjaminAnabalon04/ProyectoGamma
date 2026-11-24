@@ -1,8 +1,9 @@
-import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { pedir } from '../api/api';
-
 // Desarrollado por: Robert Ramírez
+
+import { useState } from 'react';
+import { Navigate, useNavigate } from 'react-router-dom';
+import { guardarSesion, obtenerToken, pedir } from '../api/api';
+
 export default function Login() {
   const [rut, setRut] = useState('');
   const [password, setPassword] = useState('');
@@ -10,8 +11,10 @@ export default function Login() {
   const [cargando, setCargando] = useState(false);
   const navigate = useNavigate();
 
-  async function manejarEnvio(e) {
-    e.preventDefault();
+  if (obtenerToken()) return <Navigate to="/mis-trabajos" replace />;
+
+  async function manejarEnvio(evento) {
+    evento.preventDefault();
     setError('');
     setCargando(true);
 
@@ -19,11 +22,10 @@ export default function Login() {
       const datos = await pedir('/auth/login', {
         metodo: 'POST',
         cuerpo: { rut: rut.trim(), password },
+        sinCola: true,
       });
-
-      localStorage.setItem('token', datos.token);
-      localStorage.setItem('usuario', JSON.stringify(datos.usuario));
-      navigate('/mis-trabajos');
+      guardarSesion(datos);
+      navigate('/mis-trabajos', { replace: true });
     } catch (err) {
       setError(err.message || 'Credenciales inválidas.');
     } finally {
@@ -36,41 +38,33 @@ export default function Login() {
       <h1>Iniciar sesión</h1>
       <p>Portal de Terreno FYAG</p>
 
-      <form onSubmit={manejarEnvio}>
-        <div style={{ marginBottom: '16px' }}>
-          <label htmlFor="rut" className="etiqueta">
-            RUT
-          </label>
+      <form onSubmit={manejarEnvio} className="tarjeta">
+        <div className="campo">
+          <label htmlFor="rut" className="etiqueta">RUT</label>
           <input
             id="rut"
             type="text"
             value={rut}
-            onChange={(e) => setRut(e.target.value)}
+            onChange={(evento) => setRut(evento.target.value)}
             placeholder="11.111.111-1"
+            autoComplete="username"
             required
-            style={{ width: '100%', minHeight: '48px', padding: '10px', fontSize: '18px', marginTop: '6px' }}
           />
         </div>
 
-        <div style={{ marginBottom: '16px' }}>
-          <label htmlFor="password" className="etiqueta">
-            Contraseña
-          </label>
+        <div className="campo">
+          <label htmlFor="password" className="etiqueta">Contraseña</label>
           <input
             id="password"
             type="password"
             value={password}
-            onChange={(e) => setPassword(e.target.value)}
+            onChange={(evento) => setPassword(evento.target.value)}
+            autoComplete="current-password"
             required
-            style={{ width: '100%', minHeight: '48px', padding: '10px', fontSize: '18px', marginTop: '6px' }}
           />
         </div>
 
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
+        {error && <p className="error" role="alert">{error}</p>}
 
         <button type="submit" className="boton" disabled={cargando}>
           {cargando ? 'Ingresando...' : 'Ingresar'}
