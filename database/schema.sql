@@ -193,6 +193,7 @@ CREATE TABLE evidencia (
     longitud       NUMERIC(9,6) CHECK (longitud BETWEEN -180 AND 180),
     nombre_firmante VARCHAR(120),
     rut_firmante   VARCHAR(20),
+    sha256         VARCHAR(64),
     estado_carga   VARCHAR(20)  NOT NULL DEFAULT 'PENDIENTE'
                    CHECK (estado_carga IN ('PENDIENTE', 'GUARDADO', 'ERROR'))
 );

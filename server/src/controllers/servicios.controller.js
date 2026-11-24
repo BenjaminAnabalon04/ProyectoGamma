@@ -263,6 +263,24 @@ async function enviar(req, res) {
         codigo_hoja_erp: hoja.codigo_hoja_erp,
       });
     }
+    const conteoEvidencias = await db.query(
+      `SELECT COUNT(*) FILTER (WHERE tipo = 'foto')::int  AS fotos,
+              COUNT(*) FILTER (WHERE tipo = 'firma')::int AS firmas
+         FROM evidencia
+        WHERE id_hoja = $1`,
+      [hoja.id_hoja]
+    );
+    const fotos = conteoEvidencias.rows[0]?.fotos || 0;
+    const firmas = conteoEvidencias.rows[0]?.firmas || 0;
+    if (fotos < 1 || firmas < 1) {
+      return res.status(409).json({
+        mensaje: 'Debes adjuntar al menos una foto y una firma antes de enviar al ERP',
+        faltantes: [
+          ...(fotos < 1 ? ['al menos una foto'] : []),
+          ...(firmas < 1 ? ['la firma del cliente'] : []),
+        ],
+      });
+    }
 
     const completo = await db.query(
       `SELECT h.fecha_inicio, h.fecha_fin, h.horometro_servicio, h.actividades,

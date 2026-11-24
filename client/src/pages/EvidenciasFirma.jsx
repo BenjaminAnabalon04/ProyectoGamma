@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cerrarSesion, obtenerToken, pedir } from '../api/api';
+import ImagenEvidencia from '../components/ImagenEvidencia';
+import { rutValido } from '../utils/rut';
 
 const FORMATOS = {
   'image/jpeg': 'jpg',
@@ -10,7 +12,8 @@ const FORMATOS = {
   'image/png': 'png',
   'image/webp': 'webp',
 };
-const TAMANO_MAXIMO = 5 * 1024 * 1024;
+const PESO_MAXIMO = 1024 * 1024;
+const LADO_MAXIMO = 1280;
 
 function leerLocal(clave) {
   try {
@@ -20,13 +23,41 @@ function leerLocal(clave) {
   }
 }
 
-function leerArchivo(archivo) {
+function cargarImagen(archivo) {
   return new Promise((resolve, reject) => {
-    const lector = new FileReader();
-    lector.onload = () => resolve(String(lector.result));
-    lector.onerror = () => reject(new Error('No se pudo leer la imagen seleccionada.'));
-    lector.readAsDataURL(archivo);
+    const url = URL.createObjectURL(archivo);
+    const imagen = new Image();
+    imagen.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(imagen);
+    };
+    imagen.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error('No se pudo leer la imagen seleccionada.'));
+    };
+    imagen.src = url;
   });
+}
+
+async function comprimirFoto(archivo) {
+  const imagen = await cargarImagen(archivo);
+  const escala = Math.min(1, LADO_MAXIMO / Math.max(imagen.width, imagen.height));
+  const lienzo = document.createElement('canvas');
+  lienzo.width = Math.max(1, Math.round(imagen.width * escala));
+  lienzo.height = Math.max(1, Math.round(imagen.height * escala));
+
+  const contexto = lienzo.getContext('2d');
+  contexto.fillStyle = '#ffffff';
+  contexto.fillRect(0, 0, lienzo.width, lienzo.height);
+  contexto.drawImage(imagen, 0, 0, lienzo.width, lienzo.height);
+
+  let calidad = 0.8;
+  let dataUrl = lienzo.toDataURL('image/jpeg', calidad);
+  while (dataUrl.length * 0.75 > PESO_MAXIMO && calidad > 0.35) {
+    calidad = Number((calidad - 0.1).toFixed(2));
+    dataUrl = lienzo.toDataURL('image/jpeg', calidad);
+  }
+  return { dataUrl, formato: 'jpg' };
 }
 
 export default function EvidenciasFirma() {
@@ -162,11 +193,13 @@ export default function EvidenciasFirma() {
       setEvidencias((previo) => [
         ...previo,
         {
-          id_evidencia: idEvidencia,
+          id_evidencia: respuesta.id_evidencia || idEvidencia,
           id_hoja: hoja.id_hoja,
           ...detalles,
+          dataUrl: archivo,
+          sha256: respuesta.sha256 ?? null,
           fecha_captura: new Date().toISOString(),
-          url: null,
+          url: respuesta.url ?? null,
           pendiente: Boolean(respuesta.pendiente),
         },
       ]);
@@ -189,19 +222,18 @@ export default function EvidenciasFirma() {
     evento.target.value = '';
     if (!archivo) return;
 
-    const formato = FORMATOS[archivo.type];
-    if (!formato) {
+    if (!FORMATOS[archivo.type]) {
       setError('Formato no admitido. Usa JPG, PNG o WEBP.');
-      return;
-    }
-    if (archivo.size > TAMANO_MAXIMO) {
-      setError('La foto debe pesar menos de 5 MB.');
       return;
     }
 
     try {
-      const archivoBase64 = await leerArchivo(archivo);
-      await guardarEvidencia({ tipo: 'foto', archivo: archivoBase64, formato });
+      const { dataUrl, formato } = await comprimirFoto(archivo);
+      if (dataUrl.length * 0.75 > PESO_MAXIMO) {
+        setError('La foto sigue siendo muy grande después de comprimirla. Intenta con otra.');
+        return;
+      }
+      await guardarEvidencia({ tipo: 'foto', archivo: dataUrl, formato });
     } catch (err) {
       setError(err.message || 'No se pudo preparar la foto.');
     }
@@ -214,6 +246,11 @@ export default function EvidenciasFirma() {
 
     if (!nombreFirmante.trim() || !rutFirmante.trim()) {
       setError('La firma necesita el nombre y el RUT de quien firma.');
+      return;
+    }
+
+    if (!rutValido(rutFirmante)) {
+      setError('El RUT ingresado no es válido. Revisa el dígito verificador.');
       return;
     }
 
@@ -292,7 +329,11 @@ export default function EvidenciasFirma() {
               {fotos.map((foto) => (
                 <li key={foto.id_evidencia}>
                   <strong>Foto</strong>
-                  {foto.url && <img className="miniatura" src={foto.url} alt="Evidencia del servicio" />}
+                  <ImagenEvidencia
+                    idEvidencia={foto.id_evidencia}
+                    dataUrl={foto.dataUrl}
+                    alt="Evidencia del servicio"
+                  />
                   <span className="etiqueta">
                     {foto.pendiente ? 'Por enviar' : new Date(foto.fecha_captura).toLocaleString()}
                   </span>
@@ -356,7 +397,11 @@ export default function EvidenciasFirma() {
                 <li key={firma.id_evidencia}>
                   <strong>{firma.nombre_firmante || 'Firma registrada'}</strong>
                   <span>{firma.rut_firmante}</span>
-                  {firma.url && <img className="miniatura" src={firma.url} alt="Firma capturada" />}
+                  <ImagenEvidencia
+                    idEvidencia={firma.id_evidencia}
+                    dataUrl={firma.dataUrl}
+                    alt="Firma capturada"
+                  />
                   <span className="etiqueta">
                     {firma.pendiente ? 'Por enviar' : new Date(firma.fecha_captura).toLocaleString()}
                   </span>

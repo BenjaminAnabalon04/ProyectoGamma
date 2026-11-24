@@ -28,7 +28,6 @@ fs.mkdirSync(process.env.UPLOADS_DIR, { recursive: true });
 
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use('/uploads', express.static(process.env.UPLOADS_DIR));
 
 app.use('/api/v1/health', healthRoutes);
 app.use('/api/v1/auth', authRoutes);

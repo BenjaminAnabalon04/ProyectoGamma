@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cerrarSesion, obtenerToken, pedir } from '../api/api';
+import ImagenEvidencia from '../components/ImagenEvidencia';
 
 function leerLocal(clave) {
   try {
@@ -182,7 +183,10 @@ export default function Resumen() {
                   <strong>{evidencia.tipo === 'firma' ? 'Firma' : 'Foto'}</strong>
                   <span>{fecha(evidencia.fecha_captura)}</span>
                   {evidencia.nombre_firmante && <span>Firmante: {evidencia.nombre_firmante}</span>}
-                  <img className="miniatura" src={evidencia.url} alt={`Evidencia ${evidencia.tipo}`} />
+                  <ImagenEvidencia
+                    idEvidencia={evidencia.id_evidencia}
+                    alt={`Evidencia ${evidencia.tipo}`}
+                  />
                 </li>
               ))}
             </ul>

@@ -257,7 +257,10 @@ test('HU-06: guardar evidencia escribe el archivo y registra la clave', async ()
   ]);
   const { registrarEvidencia } = cargar('src/controllers/evidencias.controller.js', db);
   const res = responder();
-
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64'
+  );
   await registrarEvidencia(
     {
       usuario: TOKEN,
@@ -265,7 +268,7 @@ test('HU-06: guardar evidencia escribe el archivo y registra la clave', async ()
         id_hoja: ID_HOJA,
         id_evidencia: idEvidencia,
         tipo: 'foto',
-        archivo: `data:image/png;base64,${Buffer.from('foto').toString('base64')}`,
+        archivo: `data:image/png;base64,${png.toString('base64')}`,
         formato: 'png',
       },
     },
@@ -275,9 +278,9 @@ test('HU-06: guardar evidencia escribe el archivo y registra la clave', async ()
 
   assert.equal(res.codigo, 201);
   assert.equal(res.datos.clave_archivo, `${idEvidencia}.png`);
+  assert.equal(res.datos.sha256, crypto.createHash('sha256').update(png).digest('hex'));
   const contenido = await fs.readFile(path.join(carpeta, `${idEvidencia}.png`));
-  assert.equal(contenido.toString(), 'foto');
-  await fs.rm(carpeta, { recursive: true, force: true });
+  assert.equal(contenido.equals(png), true);
 });
 
 test('HU-08: el técnico crea un presupuesto sin precios', async () => {
