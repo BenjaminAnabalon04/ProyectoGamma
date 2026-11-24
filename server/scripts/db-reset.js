@@ -1,8 +1,9 @@
+// Desarrollado por: Benjamín Anabalón
+
 const fs = require('fs');
 const path = require('path');
 const db = require('../src/db');
 
-// Este script se ejecuta con `npm run db:reset dentro de la carpeta del servidor` y reinicia la base de datos.
 async function main() {
   const carpeta = path.join(__dirname, '..', '..', 'database');
   for (const archivo of ['schema.sql', 'seed.sql']) {

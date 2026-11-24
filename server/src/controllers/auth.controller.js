@@ -1,64 +1,61 @@
+// Desarrollado por: Agustín Insunsa
+
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+const { normalizarRut } = require('../utils/validacion');
 
 const MAX_INTENTOS = 5;
+const MINUTOS_BLOQUEO = 15;
 const MENSAJE_GENERICO = 'RUT o contraseña incorrectos';
-
-// Quita puntos, guion y espacios: "11.111.111-1" y "111111111" se tratan igual.
-function normalizarRut(rut) {
-  return String(rut).replace(/[.\-\s]/g, '').toUpperCase();
-}
+const HASH_FANTASMA = bcrypt.hashSync('contrasena-fantasma', 10);
 
 async function login(req, res) {
   const { rut, password } = req.body || {};
+  const rutLimpio = normalizarRut(rut);
+  const clave = password === undefined || password === null ? '' : String(password);
 
-  if (!rut || !password) {
+  if (!rutLimpio || !clave.trim()) {
     return res.status(400).json({ mensaje: 'Debes ingresar RUT y contraseña' });
   }
 
   try {
-    // Busca al usuario comparando el RUT sin puntos ni guion.
     const resultado = await db.query(
       `SELECT id_usuario, nombre, rol, password_hash, intentos_fallidos, bloqueado_hasta
          FROM usuario
-        WHERE UPPER(REPLACE(REPLACE(rut, '.', ''), '-', '')) = $1
+        WHERE UPPER(REPLACE(REPLACE(REPLACE(rut, '.', ''), '-', ''), ' ', '')) = $1
           AND activo = TRUE`,
-      [normalizarRut(rut)]
+      [rutLimpio]
     );
 
     const usuario = resultado.rows[0];
 
-    // Mensaje genérico: no se revela si el RUT existe o no.
-    if (!usuario) {
-      return res.status(401).json({ mensaje: MENSAJE_GENERICO });
-    }
-
-    // Cuenta bloqueada por demasiados intentos.
-    if (usuario.bloqueado_hasta && new Date(usuario.bloqueado_hasta) > new Date()) {
+    if (usuario?.bloqueado_hasta && new Date(usuario.bloqueado_hasta) > new Date()) {
       return res.status(401).json({
-        mensaje: 'Cuenta bloqueada temporalmente por demasiados intentos. Intenta más tarde.',
+        mensaje: `Cuenta bloqueada por ${MINUTOS_BLOQUEO} minutos. Intenta más tarde.`,
       });
     }
 
-    const claveCorrecta = await bcrypt.compare(password, usuario.password_hash);
+    const claveCorrecta = usuario
+      ? await bcrypt.compare(clave, usuario.password_hash)
+      : await bcrypt.compare(clave, HASH_FANTASMA);
 
-    if (!claveCorrecta) {
-      // Suma un intento; al llegar a 5 bloquea 15 minutos y reinicia el contador.
-      await db.query(
-        `UPDATE usuario
-            SET intentos_fallidos = CASE WHEN intentos_fallidos + 1 >= $2 THEN 0
-                                         ELSE intentos_fallidos + 1 END,
-                bloqueado_hasta   = CASE WHEN intentos_fallidos + 1 >= $2
-                                         THEN now() + interval '15 minutes'
+    if (!usuario || !claveCorrecta) {
+      if (usuario) {
+        await db.query(
+          `UPDATE usuario
+              SET intentos_fallidos = CASE WHEN intentos_fallidos + 1 >= $2 THEN 0
+                                           ELSE intentos_fallidos + 1 END,
+                  bloqueado_hasta = CASE WHEN intentos_fallidos + 1 >= $2
+                                         THEN now() + ($3 || ' minutes')::interval
                                          ELSE bloqueado_hasta END
-          WHERE id_usuario = $1`,
-        [usuario.id_usuario, MAX_INTENTOS]
-      );
+            WHERE id_usuario = $1`,
+          [usuario.id_usuario, MAX_INTENTOS, String(MINUTOS_BLOQUEO)]
+        );
+      }
       return res.status(401).json({ mensaje: MENSAJE_GENERICO });
     }
 
-    // Clave correcta: limpia los intentos fallidos y el bloqueo.
     await db.query(
       'UPDATE usuario SET intentos_fallidos = 0, bloqueado_hasta = NULL WHERE id_usuario = $1',
       [usuario.id_usuario]
@@ -69,21 +66,47 @@ async function login(req, res) {
       return res.status(500).json({ mensaje: 'Error de configuración del servidor' });
     }
 
-    // PostgreSQL devuelve los BIGINT como texto, por eso el Number().
     const id_usuario = Number(usuario.id_usuario);
+    const token = jwt.sign(
+      { id_usuario, rol: usuario.rol, nombre: usuario.nombre },
+      process.env.JWT_SECRET,
+      { expiresIn: '8h' }
+    );
 
-    const token = jwt.sign({ id_usuario, rol: usuario.rol }, process.env.JWT_SECRET, {
-      expiresIn: '8h',
-    });
-
-    res.json({
+    return res.json({
       token,
       usuario: { id_usuario, nombre: usuario.nombre, rol: usuario.rol },
     });
   } catch (error) {
     console.error('Error en login:', error.message);
-    res.status(500).json({ mensaje: 'No se pudo iniciar sesión' });
+    return res.status(500).json({ mensaje: 'No se pudo iniciar sesión' });
   }
 }
 
-module.exports = { login };
+async function perfil(req, res) {
+  try {
+    const resultado = await db.query(
+      `SELECT id_usuario, rut, nombre, correo, rol, zona
+         FROM usuario
+        WHERE id_usuario = $1 AND activo = TRUE`,
+      [req.usuario.id_usuario]
+    );
+    if (resultado.rows.length === 0) {
+      return res.status(404).json({ mensaje: 'Usuario no encontrado' });
+    }
+    const fila = resultado.rows[0];
+    return res.json({
+      id_usuario: Number(fila.id_usuario),
+      rut: fila.rut,
+      nombre: fila.nombre,
+      correo: fila.correo,
+      rol: fila.rol,
+      zona: fila.zona,
+    });
+  } catch (error) {
+    console.error('Error al obtener perfil:', error.message);
+    return res.status(500).json({ mensaje: 'No se pudo obtener el perfil' });
+  }
+}
+
+module.exports = { login, perfil };

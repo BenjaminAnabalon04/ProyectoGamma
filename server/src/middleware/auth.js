@@ -1,7 +1,7 @@
+// Desarrollado por: Agustín Insunsa
+
 const jwt = require('jsonwebtoken');
 
-// Revisa el encabezado "Authorization: Bearer <token>".
-// Si el token es válido, deja los datos del usuario en req.usuario y sigue.
 function verificarToken(req, res, next) {
   const encabezado = req.headers.authorization || '';
   const [tipo, token] = encabezado.split(' ');
@@ -17,11 +17,27 @@ function verificarToken(req, res, next) {
 
   try {
     const datos = jwt.verify(token, process.env.JWT_SECRET);
-    req.usuario = { id_usuario: datos.id_usuario, rol: datos.rol };
-    next();
-  } catch (error) {
+    req.usuario = {
+      id_usuario: Number(datos.id_usuario),
+      rol: datos.rol,
+      nombre: datos.nombre,
+    };
+    return next();
+  } catch {
     return res.status(401).json({ mensaje: 'Sesión inválida o vencida' });
   }
 }
 
-module.exports = { verificarToken };
+function verificarRol(...roles) {
+  return (req, res, next) => {
+    if (!req.usuario) {
+      return res.status(401).json({ mensaje: 'Falta el token de sesión' });
+    }
+    if (!roles.includes(req.usuario.rol)) {
+      return res.status(403).json({ mensaje: 'No tienes permiso para realizar esta acción' });
+    }
+    return next();
+  };
+}
+
+module.exports = { verificarToken, verificarRol };
