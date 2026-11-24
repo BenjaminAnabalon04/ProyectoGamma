@@ -190,3 +190,26 @@ El cliente se publicó con:
 
 La protección SSO se desactivó para que la PWA sea pública. La verificación HTTP posterior dio
 200 en el cliente, `/health`, `/health/erp` y `/erp/estado`.
+
+La carga de tablas se hizo con un proxy TCP temporal de PostgreSQL
+(`junction.proxy.rlwy.net:58902`) porque la URL de Railway apunta al hostname interno
+`postgres.railway.internal`, que no se resuelve fuera de Railway. El proxy y el dominio público de
+PostgreSQL se eliminaron justo después de cargar `schema.sql` y `seed.sql`; `/health/db` sigue en
+verde porque el API usa la red interna.
+
+Verificación final del flujo completo en producción:
+
+    login técnico => Carlos Mendoza / tecnico
+    órdenes asignadas => 3 (OT-8842)
+    servicio iniciado => EN_EJECUCION, checklist 1
+    checklist => 6 respuestas guardadas
+    consumo => id idempotente creado
+    evidencia => archivo PNG guardado en el volumen
+    finalizado => FINALIZADO
+    envío al ERP => ENVIADO / HS-ERP-1001
+    detalle => 6 respuestas, 1 consumo, 1 evidencia, estado ENVIADO
+    resumen administración => 6 órdenes, 5 asignaciones, 1 servicio finalizado, 0 errores de envío
+
+También se comprobó que el bundle de Vercel contiene la URL `gamma-api-production.up.railway.app`
+y que `/manifest.webmanifest`, `/sw.js`, `/icon-192.svg`, `/icon-512.svg` y `/favicon.svg` responden
+200 con su tipo MIME correcto.
