@@ -1,21 +1,41 @@
+// Desarrollado por: Agustín Insunsa
+
 const db = require('../db');
+const { esUuid, enteroPositivo, texto, hojaDelTecnico } = require('../utils/validacion');
 
-const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RESULTADOS_PERMITIDOS = ['OPERATIVO', 'REQUIERE_SEGUIMIENTO', 'FUERA_DE_SERVICIO'];
 
-// POST /api/v1/servicios  -> inicia un servicio (crea la hoja de servicio).
+function normalizarResultado(valor) {
+  const limpio = texto(valor, 30);
+  if (!limpio) return { valido: true, valor: null };
+  const valorNormalizado = limpio.toUpperCase().replace(/[\s-]+/g, '_');
+  return {
+    valido: RESULTADOS_PERMITIDOS.includes(valorNormalizado),
+    valor: valorNormalizado,
+  };
+}
+
+function respuestaHoja(hoja) {
+  return {
+    id_hoja: hoja.id_hoja,
+    id_checklist: Number(hoja.id_checklist),
+    estado_servicio: hoja.estado_servicio,
+    fecha_inicio: hoja.fecha_inicio,
+  };
+}
+
 async function iniciar(req, res) {
-  const { id_hoja, id_asignacion } = req.body || {};
-  const idAsignacion = Number(id_asignacion);
+  const { id_hoja, id_asignacion, id_dispositivo } = req.body || {};
+  const idAsignacion = enteroPositivo(id_asignacion);
 
-  if (!UUID_REGEX.test(String(id_hoja || ''))) {
+  if (!esUuid(id_hoja)) {
     return res.status(400).json({ mensaje: 'id_hoja debe ser un UUID válido' });
   }
-  if (!Number.isInteger(idAsignacion) || idAsignacion <= 0) {
+  if (!idAsignacion) {
     return res.status(400).json({ mensaje: 'id_asignacion no es válido' });
   }
 
   try {
-    // La asignación debe existir, estar activa y ser del técnico que hace la petición.
     const asig = await db.query(
       `SELECT a.id_tecnico, a.activa, ot.tipo_servicio
          FROM asignacion a
@@ -33,7 +53,6 @@ async function iniciar(req, res) {
       return res.status(404).json({ mensaje: 'Asignación no encontrada' });
     }
 
-    // Si el celular reenvía el mismo id_hoja, se devuelve la que ya existe (no se duplica).
     const existente = await db.query(
       `SELECT id_hoja, id_asignacion, id_checklist, estado_servicio, fecha_inicio
          FROM hoja_servicio
@@ -45,15 +64,9 @@ async function iniciar(req, res) {
       if (Number(hoja.id_asignacion) !== idAsignacion) {
         return res.status(409).json({ mensaje: 'Ese id_hoja ya pertenece a otro servicio' });
       }
-      return res.json({
-        id_hoja: hoja.id_hoja,
-        id_checklist: Number(hoja.id_checklist),
-        estado_servicio: hoja.estado_servicio,
-        fecha_inicio: hoja.fecha_inicio,
-      });
+      return res.json(respuestaHoja(hoja));
     }
 
-    // El checklist se elige según el tipo de servicio de la orden.
     const chk = await db.query(
       `SELECT id_checklist
          FROM checklist
@@ -63,38 +76,105 @@ async function iniciar(req, res) {
       [asignacion.tipo_servicio]
     );
     if (chk.rows.length === 0) {
-      return res.status(404).json({ mensaje: 'No hay un checklist activo para este tipo de servicio' });
+      return res
+        .status(404)
+        .json({ mensaje: 'No hay un checklist activo para este tipo de servicio' });
     }
 
     const nueva = await db.query(
-      `INSERT INTO hoja_servicio (id_hoja, id_asignacion, id_checklist, fecha_inicio)
-       VALUES ($1, $2, $3, now())
+      `INSERT INTO hoja_servicio (id_hoja, id_asignacion, id_checklist, fecha_inicio, id_dispositivo)
+       VALUES ($1, $2, $3, now(), $4)
        RETURNING id_hoja, id_checklist, estado_servicio, fecha_inicio`,
-      [id_hoja, idAsignacion, chk.rows[0].id_checklist]
+      [id_hoja, idAsignacion, chk.rows[0].id_checklist, texto(id_dispositivo, 60)]
     );
-    const hoja = nueva.rows[0];
 
-    res.status(201).json({
-      id_hoja: hoja.id_hoja,
-      id_checklist: Number(hoja.id_checklist),
-      estado_servicio: hoja.estado_servicio,
-      fecha_inicio: hoja.fecha_inicio,
-    });
+    return res.status(201).json(respuestaHoja(nueva.rows[0]));
   } catch (error) {
     console.error('Error al iniciar servicio:', error.message);
-    res.status(500).json({ mensaje: 'No se pudo iniciar el servicio' });
+    return res.status(500).json({ mensaje: 'No se pudo iniciar el servicio' });
   }
 }
 
-//
+async function obtenerHoja(req, res) {
+  try {
+    const hoja = await hojaDelTecnico(db, req.params.id_hoja, req.usuario.id_usuario, {
+      permitirEnviada: true,
+    });
+    if (!hoja) return res.status(404).json({ mensaje: 'Hoja de servicio no encontrada' });
 
-// PUT /api/v1/servicios/:id_hoja/finalizar  -> cierra la hoja de servicio.
+    const [respuestas, consumos, evidencias] = await Promise.all([
+      db.query(
+        `SELECT id_item, pregunta_texto, resultado, observacion
+           FROM respuesta_checklist
+          WHERE id_hoja = $1
+          ORDER BY id_item`,
+        [hoja.id_hoja]
+      ),
+      db.query(
+        `SELECT cm.id_consumo, cm.id_material, m.nombre, m.unidad_medida, cm.cantidad
+           FROM consumo_material cm
+           JOIN material m ON m.id_material = cm.id_material
+          WHERE cm.id_hoja = $1
+          ORDER BY cm.fecha_registro, cm.id_consumo`,
+        [hoja.id_hoja]
+      ),
+      db.query(
+        `SELECT id_evidencia, tipo, clave_archivo, formato, nombre_firmante, rut_firmante
+           FROM evidencia
+          WHERE id_hoja = $1
+          ORDER BY fecha_captura, id_evidencia`,
+        [hoja.id_hoja]
+      ),
+    ]);
+
+    const detalle = await db.query(
+      `SELECT o.id_orden, o.codigo_orden_erp, o.titulo, o.tipo_servicio,
+              c.razon_social AS cliente, e.nombre AS equipo
+         FROM orden_trabajo o
+         JOIN cliente c ON c.id_cliente = o.id_cliente
+         LEFT JOIN equipo e ON e.id_equipo = o.id_equipo
+        WHERE o.id_orden = $1`,
+      [hoja.id_orden]
+    );
+
+    return res.json({
+      ...respuestaHoja(hoja),
+      id_asignacion: Number(hoja.id_asignacion),
+      fecha_fin: hoja.fecha_fin,
+      estado_envio_erp: hoja.estado_envio_erp,
+      codigo_hoja_erp: hoja.codigo_hoja_erp,
+      horometro_servicio: hoja.horometro_servicio,
+      actividades: hoja.actividades,
+      observaciones_tecnicas: hoja.observaciones_tecnicas,
+      resultado: hoja.resultado,
+      orden: detalle.rows[0] || null,
+      respuestas: respuestas.rows,
+      consumos: consumos.rows.map((consumo) => ({
+        ...consumo,
+        id_consumo: consumo.id_consumo,
+        id_material: Number(consumo.id_material),
+        cantidad: Number(consumo.cantidad),
+      })),
+      evidencias: evidencias.rows.map((evidencia) => ({
+        ...evidencia,
+        url: `/uploads/${evidencia.clave_archivo}`,
+      })),
+    });
+  } catch (error) {
+    console.error('Error al obtener hoja:', error.message);
+    return res.status(500).json({ mensaje: 'No se pudo obtener la hoja de servicio' });
+  }
+}
+
 async function finalizar(req, res) {
-  const { id_hoja } = req.params;
   const { horometro_servicio, actividades, observaciones_tecnicas, resultado } = req.body || {};
+  const resultadoValidado = normalizarResultado(resultado);
 
-  if (!UUID_REGEX.test(String(id_hoja))) {
+  if (!esUuid(req.params.id_hoja)) {
     return res.status(400).json({ mensaje: 'id_hoja debe ser un UUID válido' });
+  }
+  if (!resultadoValidado.valido) {
+    return res.status(400).json({ mensaje: 'El resultado indicado no es válido' });
   }
 
   let horometro = null;
@@ -106,26 +186,13 @@ async function finalizar(req, res) {
   }
 
   try {
-    // La hoja debe existir y ser de una asignación del técnico que hace la petición.
-    const hojaRes = await db.query(
-      `SELECT hs.id_checklist, hs.estado_servicio, a.id_tecnico
-         FROM hoja_servicio hs
-         JOIN asignacion a ON a.id_asignacion = hs.id_asignacion
-        WHERE hs.id_hoja = $1`,
-      [id_hoja]
-    );
-    const hoja = hojaRes.rows[0];
+    const hoja = await hojaDelTecnico(db, req.params.id_hoja, req.usuario.id_usuario);
+    if (!hoja) return res.status(404).json({ mensaje: 'Hoja de servicio no encontrada' });
 
-    if (!hoja || Number(hoja.id_tecnico) !== req.usuario.id_usuario) {
-      return res.status(404).json({ mensaje: 'Hoja de servicio no encontrada' });
-    }
-
-    // Si ya estaba finalizada, se responde igual (así un reintento no falla).
     if (hoja.estado_servicio === 'FINALIZADO') {
-      return res.json({ id_hoja, estado_servicio: 'FINALIZADO' });
+      return res.json({ id_hoja: hoja.id_hoja, estado_servicio: 'FINALIZADO' });
     }
 
-    // Ítems obligatorios del checklist que no tienen respuesta.
     const faltantesRes = await db.query(
       `SELECT i.pregunta
          FROM item_checklist i
@@ -135,13 +202,13 @@ async function finalizar(req, res) {
           AND i.obligatorio = TRUE
           AND (r.resultado IS NULL OR TRIM(r.resultado) = '')
         ORDER BY i.orden`,
-      [id_hoja, hoja.id_checklist]
+      [hoja.id_hoja, hoja.id_checklist]
     );
 
     if (faltantesRes.rows.length > 0) {
       return res.status(400).json({
         mensaje: 'Faltan ítems obligatorios del checklist',
-        faltantes: faltantesRes.rows.map((f) => f.pregunta),
+        faltantes: faltantesRes.rows.map((fila) => fila.pregunta),
       });
     }
 
@@ -155,91 +222,87 @@ async function finalizar(req, res) {
               resultado = $5
         WHERE id_hoja = $1
         RETURNING estado_servicio, fecha_fin`,
-      [id_hoja, horometro, actividades ?? null, observaciones_tecnicas ?? null, resultado ?? null]
+      [
+        hoja.id_hoja,
+        horometro,
+        texto(actividades, 4000),
+        texto(observaciones_tecnicas, 4000),
+        resultadoValidado.valor,
+      ]
     );
 
-    res.json({
-      id_hoja,
+    return res.json({
+      id_hoja: hoja.id_hoja,
       estado_servicio: cierre.rows[0].estado_servicio,
       fecha_fin: cierre.rows[0].fecha_fin,
     });
   } catch (error) {
     console.error('Error al finalizar servicio:', error.message);
-    res.status(500).json({ mensaje: 'No se pudo finalizar el servicio' });
+    return res.status(500).json({ mensaje: 'No se pudo finalizar el servicio' });
   }
 }
 
-//
-// POST /api/v1/servicios/:id_hoja/enviar  -> envía la hoja finalizada al ERP.
 async function enviar(req, res) {
-  const { id_hoja } = req.params;
-
-  if (!UUID_REGEX.test(String(id_hoja))) {
+  if (!esUuid(req.params.id_hoja)) {
     return res.status(400).json({ mensaje: 'id_hoja debe ser un UUID válido' });
   }
 
   try {
-    const hojaRes = await db.query(
-      `SELECT hs.id_hoja, hs.fecha_inicio, hs.fecha_fin, hs.horometro_servicio,
-              hs.actividades, hs.observaciones_tecnicas, hs.resultado,
-              hs.estado_servicio, hs.estado_envio_erp,
-              a.id_tecnico, ot.codigo_orden_erp, ot.titulo
-         FROM hoja_servicio hs
-         JOIN asignacion a ON a.id_asignacion = hs.id_asignacion
-         JOIN orden_trabajo ot ON ot.id_orden = a.id_orden
-        WHERE hs.id_hoja = $1`,
-      [id_hoja]
-    );
-    const hoja = hojaRes.rows[0];
-
-    if (!hoja || Number(hoja.id_tecnico) !== req.usuario.id_usuario) {
-      return res.status(404).json({ mensaje: 'Hoja de servicio no encontrada' });
-    }
+    const hoja = await hojaDelTecnico(db, req.params.id_hoja, req.usuario.id_usuario, {
+      permitirEnviada: true,
+    });
+    if (!hoja) return res.status(404).json({ mensaje: 'Hoja de servicio no encontrada' });
 
     if (hoja.estado_servicio !== 'FINALIZADO') {
       return res.status(409).json({ mensaje: 'Solo se puede enviar un servicio finalizado' });
     }
 
-    // Si ya se envió, no se manda otra vez (así un reintento no duplica).
     if (hoja.estado_envio_erp === 'ENVIADO' || hoja.estado_envio_erp === 'SINCRONIZADO') {
-      return res.json({ estado_envio_erp: hoja.estado_envio_erp });
+      return res.json({
+        estado_envio_erp: hoja.estado_envio_erp,
+        codigo_hoja_erp: hoja.codigo_hoja_erp,
+      });
     }
 
-    const respuestas = await db.query(
-      `SELECT id_item, pregunta_texto, resultado, observacion
-         FROM respuesta_checklist
-        WHERE id_hoja = $1
-        ORDER BY id_item`,
-      [id_hoja]
+    const completo = await db.query(
+      `SELECT h.fecha_inicio, h.fecha_fin, h.horometro_servicio, h.actividades,
+              h.observaciones_tecnicas, h.resultado, o.codigo_orden_erp, o.titulo
+         FROM hoja_servicio h
+         JOIN asignacion a ON a.id_asignacion = h.id_asignacion
+         JOIN orden_trabajo o ON o.id_orden = a.id_orden
+        WHERE h.id_hoja = $1`,
+      [hoja.id_hoja]
     );
 
-    const consumos = await db.query(
-      `SELECT m.codigo_material_erp, m.nombre, cm.cantidad, m.unidad_medida
-         FROM consumo_material cm
-         JOIN material m ON m.id_material = cm.id_material
-        WHERE cm.id_hoja = $1`,
-      [id_hoja]
-    );
-
-    // Solo los datos de cada evidencia, no la imagen en sí.
-    const evidencias = await db.query(
-      `SELECT tipo, clave_archivo, formato, fecha_captura, latitud, longitud,
-              nombre_firmante, rut_firmante
-         FROM evidencia
-        WHERE id_hoja = $1`,
-      [id_hoja]
-    );
+    const [respuestas, consumos, evidencias] = await Promise.all([
+      db.query(
+        `SELECT id_item, pregunta_texto, resultado, observacion
+           FROM respuesta_checklist
+          WHERE id_hoja = $1
+          ORDER BY id_item`,
+        [hoja.id_hoja]
+      ),
+      db.query(
+        `SELECT m.codigo_material_erp, m.nombre, cm.cantidad, m.unidad_medida
+           FROM consumo_material cm
+           JOIN material m ON m.id_material = cm.id_material
+          WHERE cm.id_hoja = $1
+          ORDER BY cm.fecha_registro`,
+        [hoja.id_hoja]
+      ),
+      db.query(
+        `SELECT tipo, clave_archivo, formato, fecha_captura, latitud, longitud,
+                nombre_firmante, rut_firmante
+           FROM evidencia
+          WHERE id_hoja = $1
+          ORDER BY fecha_captura`,
+        [hoja.id_hoja]
+      ),
+    ]);
 
     const paquete = {
       id_hoja: hoja.id_hoja,
-      codigo_orden_erp: hoja.codigo_orden_erp,
-      titulo: hoja.titulo,
-      fecha_inicio: hoja.fecha_inicio,
-      fecha_fin: hoja.fecha_fin,
-      horometro_servicio: hoja.horometro_servicio,
-      actividades: hoja.actividades,
-      observaciones_tecnicas: hoja.observaciones_tecnicas,
-      resultado: hoja.resultado,
+      ...completo.rows[0],
       respuestas: respuestas.rows,
       consumos: consumos.rows,
       evidencias: evidencias.rows,
@@ -247,21 +310,20 @@ async function enviar(req, res) {
 
     let respuestaErp;
     try {
-      const resp = await fetch(`${process.env.ERP_URL}/erp/servicios`, {
+      const resp = await fetch(`${process.env.ERP_URL || 'http://localhost:4000'}/erp/servicios`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(paquete),
         signal: AbortSignal.timeout(10000),
       });
-      if (!resp.ok) {
-        throw new Error(`El ERP respondió ${resp.status}`);
-      }
+      if (!resp.ok) throw new Error(`El ERP respondió ${resp.status}`);
       respuestaErp = await resp.json();
+      if (!respuestaErp?.recibido) throw new Error('El ERP no confirmó la recepción');
     } catch (errorErp) {
       console.error('Error al enviar al ERP:', errorErp.message);
       await db.query(
         "UPDATE hoja_servicio SET estado_envio_erp = 'ERROR' WHERE id_hoja = $1",
-        [id_hoja]
+        [hoja.id_hoja]
       );
       return res.status(502).json({
         mensaje: 'No se pudo enviar al ERP. Puedes reintentar.',
@@ -270,18 +332,22 @@ async function enviar(req, res) {
     }
 
     await db.query(
-      "UPDATE hoja_servicio SET estado_envio_erp = 'ENVIADO' WHERE id_hoja = $1",
-      [id_hoja]
+      `UPDATE hoja_servicio
+          SET estado_envio_erp = 'ENVIADO',
+              codigo_hoja_erp = $2,
+              fecha_envio_erp = now()
+        WHERE id_hoja = $1`,
+      [hoja.id_hoja, texto(respuestaErp.codigo_hoja_erp, 40)]
     );
 
-    res.json({
+    return res.json({
       estado_envio_erp: 'ENVIADO',
       codigo_hoja_erp: respuestaErp.codigo_hoja_erp,
     });
   } catch (error) {
     console.error('Error al enviar servicio:', error.message);
-    res.status(500).json({ mensaje: 'No se pudo enviar el servicio' });
+    return res.status(500).json({ mensaje: 'No se pudo enviar el servicio' });
   }
 }
 
-module.exports = { iniciar, finalizar, enviar };
+module.exports = { iniciar, obtenerHoja, finalizar, enviar };

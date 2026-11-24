@@ -1,113 +1,95 @@
-const db = require('../db');
+// Desarrollado por: Agustín Insunsa
+// Colaboración: Benjamin Anabalón (D2)
 
-// Se obtiene la plantilla del checklist por id_checklist, o por id_hoja / tipo_servicio
+const db = require('../db');
+const { enteroPositivo, esUuid, hojaDelTecnico } = require('../utils/validacion');
+
+async function plantillaPorTipo(dbClient, tipoServicio) {
+  const resultado = await dbClient.query(
+    `SELECT id_checklist, nombre, tipo_servicio, version
+       FROM checklist
+      WHERE LOWER(tipo_servicio) = LOWER($1) AND activo = TRUE
+      ORDER BY version DESC, id_checklist ASC
+      LIMIT 1`,
+    [tipoServicio]
+  );
+  return resultado.rows[0] || null;
+}
+
+async function plantillaPorId(dbClient, idChecklist) {
+  const resultado = await dbClient.query(
+    `SELECT id_checklist, nombre, tipo_servicio, version
+       FROM checklist
+      WHERE id_checklist = $1 AND activo = TRUE`,
+    [idChecklist]
+  );
+  return resultado.rows[0] || null;
+}
 
 async function obtenerChecklist(req, res) {
   const { id_checklist } = req.params;
   const { id_hoja, tipo_servicio } = req.query;
+  const idChecklistParam = enteroPositivo(id_checklist);
 
   try {
-    let checklistRow = null;
-
-    if (id_checklist) {
-      const r = await db.query(
-        `SELECT id_checklist, nombre, tipo_servicio, version
-           FROM checklist
-          WHERE id_checklist = $1 AND activo = TRUE`,
-        [id_checklist]
-      );
-      checklistRow = r.rows[0] || null;
-    } else if (id_hoja) {
-      // Si viene id_hoja, se intenta primero el checklist de la hoja o el asociado al tipo_servicio de la orden
-      const rHoja = await db.query(
-        `SELECT hs.id_checklist, ot.tipo_servicio
-           FROM hoja_servicio hs
-           JOIN asignacion a ON hs.id_asignacion = a.id_asignacion
-           JOIN orden_trabajo ot ON a.id_orden = ot.id_orden
-          WHERE hs.id_hoja = $1`,
-        [id_hoja]
-      );
-
-      if (rHoja.rows.length === 0) {
-        return res.status(404).json({ mensaje: 'Hoja de servicio no encontrada' });
-      }
-
-      const { id_checklist: checklistDeHoja, tipo_servicio: tipoOrden } = rHoja.rows[0];
-
-      if (tipoOrden) {
-        const rTipo = await db.query(
-          `SELECT id_checklist, nombre, tipo_servicio, version
-             FROM checklist
-            WHERE LOWER(tipo_servicio) = LOWER($1) AND activo = TRUE
-            ORDER BY version DESC, id_checklist ASC
-            LIMIT 1`,
-          [tipoOrden]
-        );
-        checklistRow = rTipo.rows[0] || null;
-      }
-
-      if (!checklistRow && checklistDeHoja) {
-        const rId = await db.query(
-          `SELECT id_checklist, nombre, tipo_servicio, version
-             FROM checklist
-            WHERE id_checklist = $1 AND activo = TRUE`,
-          [checklistDeHoja]
-        );
-        checklistRow = rId.rows[0] || null;
-      }
-    } else if (tipo_servicio) {
-      const rTipo = await db.query(
-        `SELECT id_checklist, nombre, tipo_servicio, version
-           FROM checklist
-          WHERE LOWER(tipo_servicio) = LOWER($1) AND activo = TRUE
-          ORDER BY version DESC, id_checklist ASC
-          LIMIT 1`,
-        [tipo_servicio]
-      );
-      checklistRow = rTipo.rows[0] || null;
-    } else {
-      return res.status(400).json({ mensaje: 'Debes indicar id_checklist, id_hoja o tipo_servicio' });
-    }
-
-    if (!checklistRow) {
-      return res.status(404).json({ mensaje: 'No se encontró un checklist activo para ese servicio' });
-    }
-
-    const itemsRes = await db.query(
-      `SELECT id_item, pregunta, obligatorio, orden
-         FROM item_checklist
-        WHERE id_checklist = $1
-        ORDER BY orden ASC, id_item ASC`,
-      [checklistRow.id_checklist]
-    );
-
-    // Si se pasó id_hoja, devolvemos también las respuestas ya guardadas de esa hoja
+    let checklist = null;
     let respuestasPrevias = [];
+
     if (id_hoja) {
-      const rResp = await db.query(
+      const hoja = await hojaDelTecnico(db, id_hoja, req.usuario.id_usuario, {
+        permitirEnviada: true,
+      });
+      if (!hoja) return res.status(404).json({ mensaje: 'Hoja de servicio no encontrada' });
+
+      checklist = await plantillaPorId(db, hoja.id_checklist);
+      if (!checklist && hoja.tipo_servicio) {
+        checklist = await plantillaPorTipo(db, hoja.tipo_servicio);
+      }
+
+      const respuestas = await db.query(
         `SELECT id_item, resultado, observacion
            FROM respuesta_checklist
           WHERE id_hoja = $1`,
         [id_hoja]
       );
-      respuestasPrevias = rResp.rows;
+      respuestasPrevias = respuestas.rows;
+    } else if (idChecklistParam) {
+      checklist = await plantillaPorId(db, idChecklistParam);
+    } else if (tipo_servicio) {
+      checklist = await plantillaPorTipo(db, String(tipo_servicio).trim());
+    } else {
+      return res
+        .status(400)
+        .json({ mensaje: 'Debes indicar id_checklist, id_hoja o tipo_servicio' });
     }
 
+    if (!checklist) {
+      return res.status(404).json({ mensaje: 'No se encontró un checklist activo' });
+    }
+
+    const items = await db.query(
+      `SELECT id_item, pregunta, obligatorio, orden
+         FROM item_checklist
+        WHERE id_checklist = $1
+        ORDER BY orden ASC, id_item ASC`,
+      [checklist.id_checklist]
+    );
+
     return res.json({
-      id_checklist: Number(checklistRow.id_checklist),
-      nombre: checklistRow.nombre,
-      tipo_servicio: checklistRow.tipo_servicio,
-      version: checklistRow.version,
-      items: itemsRes.rows.map((it) => ({
-        id_item: Number(it.id_item),
-        pregunta: it.pregunta,
-        obligatorio: Boolean(it.obligatorio),
-        orden: it.orden,
+      id_checklist: Number(checklist.id_checklist),
+      nombre: checklist.nombre,
+      tipo_servicio: checklist.tipo_servicio,
+      version: checklist.version,
+      items: items.rows.map((item) => ({
+        id_item: Number(item.id_item),
+        pregunta: item.pregunta,
+        obligatorio: Boolean(item.obligatorio),
+        orden: Number(item.orden),
       })),
-      respuestas: respuestasPrevias.map((rp) => ({
-        id_item: Number(rp.id_item),
-        resultado: rp.resultado || '',
-        observacion: rp.observacion || '',
+      respuestas: respuestasPrevias.map((respuesta) => ({
+        id_item: Number(respuesta.id_item),
+        resultado: respuesta.resultado || '',
+        observacion: respuesta.observacion || '',
       })),
     });
   } catch (error) {
@@ -116,15 +98,13 @@ async function obtenerChecklist(req, res) {
   }
 }
 
-// Guarda o actualiza respuestas del checklist para una hoja de servicio
 async function guardarRespuestas(req, res) {
   const { id_hoja } = req.params;
   const { respuestas } = req.body || {};
 
-  if (!id_hoja) {
-    return res.status(400).json({ mensaje: 'Falta id_hoja' });
+  if (!esUuid(id_hoja)) {
+    return res.status(400).json({ mensaje: 'id_hoja debe ser un UUID válido' });
   }
-
   if (!Array.isArray(respuestas)) {
     return res.status(400).json({ mensaje: 'El campo respuestas debe ser un arreglo' });
   }
@@ -133,39 +113,34 @@ async function guardarRespuestas(req, res) {
   try {
     await client.query('BEGIN');
 
-    // Verificamos que la hoja exista.
-    const hojaRes = await client.query(
-      'SELECT id_hoja FROM hoja_servicio WHERE id_hoja = $1',
-      [id_hoja]
-    );
-    if (hojaRes.rows.length === 0) {
+    const hoja = await hojaDelTecnico(client, id_hoja, req.usuario.id_usuario);
+    if (!hoja) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ mensaje: 'La hoja de servicio no existe' });
+      return res.status(404).json({ mensaje: 'Hoja de servicio no encontrada' });
     }
 
     let guardadas = 0;
 
-    for (const resp of respuestas) {
-      if (!resp || resp.id_item == null) continue;
+    for (const respuesta of respuestas) {
+      const idItem = enteroPositivo(respuesta?.id_item);
+      if (!idItem) continue;
 
-      const idItemNum = Number(resp.id_item);
-      const resultadoLimpio =
-        resp.resultado === undefined || resp.resultado === null
-          ? null
-          : String(resp.resultado).trim() || null;
-      const observacionLimpia =
-        resp.observacion === undefined || resp.observacion === null
-          ? null
-          : String(resp.observacion);
-
-      // Obtenemos el texto oficial de la pregunta desde item_checklist
-      const itemRes = await client.query(
-        'SELECT pregunta FROM item_checklist WHERE id_item = $1',
-        [idItemNum]
+      const item = await client.query(
+        `SELECT id_item, pregunta
+           FROM item_checklist
+          WHERE id_item = $1 AND id_checklist = $2`,
+        [idItem, hoja.id_checklist]
       );
-      if (itemRes.rows.length === 0) continue;
+      if (item.rows.length === 0) continue;
 
-      const preguntaTexto = itemRes.rows[0].pregunta;
+      const resultado =
+        respuesta.resultado === undefined || respuesta.resultado === null
+          ? null
+          : String(respuesta.resultado).trim().slice(0, 30) || null;
+      const observacion =
+        respuesta.observacion === undefined || respuesta.observacion === null
+          ? null
+          : String(respuesta.observacion).slice(0, 2000) || null;
 
       await client.query(
         `INSERT INTO respuesta_checklist (id_hoja, id_item, pregunta_texto, resultado, observacion)
@@ -175,9 +150,8 @@ async function guardarRespuestas(req, res) {
            pregunta_texto = EXCLUDED.pregunta_texto,
            resultado = EXCLUDED.resultado,
            observacion = EXCLUDED.observacion`,
-        [id_hoja, idItemNum, preguntaTexto, resultadoLimpio, observacionLimpia]
+        [id_hoja, idItem, item.rows[0].pregunta, resultado, observacion]
       );
-
       guardadas += 1;
     }
 
@@ -186,13 +160,10 @@ async function guardarRespuestas(req, res) {
   } catch (error) {
     await client.query('ROLLBACK');
     console.error('Error al guardar respuestas de checklist:', error.message);
-    return res.status(500).json({ mensaje: 'No se pudieron guardar las respuestas del checklist' });
+    return res.status(500).json({ mensaje: 'No se pudieron guardar las respuestas' });
   } finally {
     client.release();
   }
 }
 
-module.exports = {
-  obtenerChecklist,
-  guardarRespuestas,
-};
+module.exports = { obtenerChecklist, guardarRespuestas };
