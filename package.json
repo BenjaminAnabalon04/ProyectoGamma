@@ -1,0 +1,12 @@
+{
+  "name": "proyecto-gamma",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "npm --prefix server run dev",
+    "dev:erp": "npm --prefix erp-mock run dev",
+    "verificar:comentarios": "node scripts/verificar-comentarios.js",
+    "verificar": "npm run verificar:comentarios && npm --prefix server run verificar && npm --prefix server test && npm --prefix erp-mock test && npm --prefix client run lint && npm --prefix client run build"
+  }
+}

@@ -1,82 +1,94 @@
-# Cómo trabajamos con Git y GitHub
+# Flujo de Git del equipo
 
 ## La idea
 
-- `main` es la versión buena, la que siempre debe funcionar. Nadie trabaja directamente en ella.
-- Cada tarea se hace en **su propia rama**: una copia paralela donde cada uno trabaja sin molestar a los demás.
-- Cuando la tarea está lista, se pide unirla a `main` con un **Pull Request (PR)**: una solicitud en
-  GitHub para que otra persona revise el cambio antes de mezclarlo.
+- `main` es la versión buena: siempre debe pasar las verificaciones y estar lista para desplegar.
+- Cada responsable trabaja en **su propia rama**, creada desde `main`.
+- Cuando la tarea está probada, se une a `main` con un **merge local** (`--no-ff`).
+- **No se hace `git push`** en este proyecto. El historial remoto es solo de referencia histórica;
+  el trabajo se integra y despliega desde este computador.
 
-## Ciclo de trabajo de cada integrante
+## Ramas usadas
+
+| Responsable | Rama | Contenido |
+|---|---|---|
+| Agustín Insunsa | `feature/backend-agustin-insunsa` | API, autenticación y controladores |
+| Agustín Insunsa | `feature/despliegue-agustin-insunsa` | `DATABASE_URL` para Railway |
+| Benjamín Anabalón | `feature/base-de-datos-benjamin-anabalon` | `schema.sql` y `seed.sql` |
+| Benjamín Anabalón | `feature/erp-mock-benjamin-anabalon` | ERP simulado y pruebas |
+| Robert Ramírez | `feature/frontend-1-robert-ramirez` | Sesión, rutas, QR, PWA y administración |
+| Aaron Ponse | `feature/frontend-2-aaron-ponse` | Checklist, materiales, evidencias, resumen y presupuesto |
+| Sergio | `feature/documentacion-sergio` | Documentación, decisiones, QA y estándar |
+
+## Ciclo de trabajo
 
 **1. Empezar una tarea**
 
     git checkout main
-    git pull
-    git checkout -b feature/hu-01-login-api
+    git checkout -b feature/nombre-responsable
 
-- `git pull` trae lo último que hay en GitHub.
-- `git checkout -b nombre` crea la rama nueva y se cambia a ella.
-- Nombre de la rama: `feature/` + historia + descripción corta.
+El nombre sigue el patrón `feature/<tema>-<responsable>`.
 
-**2. Trabajar y guardar cambios** (varias veces al día, en pequeño)
+**2. Trabajar y guardar cambios** (en commits pequeños)
 
     git status
     git add .
-    git commit -m "HU-01: endpoint de login"
+    git -c user.name="Nombre Responsable" -c user.email="correo@example.com" commit -m "feat(tema): qué se hizo"
 
-- `git status` muestra qué archivos cambiaron. Mirarlo siempre antes de guardar.
-- `git add .` prepara los cambios. `git commit` los guarda con un mensaje.
+`git status` se mira siempre antes de guardar. Cada commit queda a nombre de su responsable,
+aunque se trabaje en un mismo computador.
 
-**3. Subir la rama a GitHub**
+**3. Verificar antes de integrar**
 
-    git push -u origin feature/hu-01-login-api
+    npm run verificar
 
-La primera vez lleva `-u origin nombre-de-rama`. Las siguientes veces basta con `git push`.
+Pasa solo si no hay comentarios sin autoría, la sintaxis es válida, las pruebas del backend y del
+ERP funcionan, y el cliente compila.
 
-**4. Abrir el Pull Request** (en GitHub): botón "Compare & pull request", título con la historia
-(`HU-01: login del técnico`), descripción de qué se hizo y cómo probarlo, elegir revisor y
-"Create pull request".
-
-**5. Revisión y unión.** El revisor prueba que funcione y que cumpla lo que dice la historia. Si está
-bien, pulsa "Merge pull request" y borra la rama.
-
-**6. Actualizar el computador** (todos, después de cada unión)
+**4. Unir a `main`**
 
     git checkout main
-    git pull
+    git merge --no-ff feature/nombre-responsable -m "Merge: tema (Nombre Responsable)"
+
+`--no-ff` conserva el merge en el historial para que se vea qué persona entregó cada bloque.
+
+**5. Repetir la verificación en `main`**
+
+    npm run verificar
 
 ## Cómo evitamos pisarnos
 
-1. Cada responsable trabaja en su propia carpeta o archivos.
-2. Los archivos compartidos (`package.json`, `README.md`, `server/index.js`, `client/src/App.jsx`) se
-   avisan en el chat antes de modificarlos.
-3. Mientras se trabaja en una rama, traer lo nuevo con frecuencia: `git pull origin main`.
-4. PR pequeños y frecuentes: mejor uno por día que uno enorme al final.
-5. **Solo Datos/Integración edita `database/schema.sql`.** Si alguien necesita un cambio en una
-   tabla, lo pide en el chat; después todos ejecutan `npm run db:reset` en `server/`.
+1. Cada responsable trabaja en sus propios archivos o en su carpeta.
+2. Los archivos compartidos (`README.md`, `server/index.js`, `client/src/App.jsx`, `package.json`
+   de la raíz) se avisan antes de modificarlos.
+3. Una rama se integra sola, con sus pruebas en verde; no se mezcla trabajo a medias.
+4. **Solo Benjamín edita** `database/schema.sql` y `database/seed.sql`. Los cambios se piden y
+   después todos ejecutan `npm run db:reset` en `server/`.
+5. Los comentarios de código solo son de autoría, por ejemplo `// Desarrollado por: Aaron Ponse`.
+   `npm run verificar:comentarios` lo comprueba automáticamente.
+6. Nunca se suben `.env`, contraseñas ni archivos de `server/uploads/`.
 
 ## Conflictos
 
-Ocurre cuando dos personas cambian las mismas líneas de un archivo. Aparece así:
+Ocurre cuando dos ramas cambian las mismas líneas. El conflicto se ve así:
 
     <<<<<<< HEAD
     tu versión
-    =======
+    ========
     la versión del otro
-    >>>>>>> main
+    >>>>>>> feature/otra-rama
 
-Se resuelve en VS Code con los botones "Accept Current / Incoming / Both Changes" (hablando con la otra
-persona si no está claro), se borran las marcas, y luego:
+Se resuelve en el editor (hablando con la otra persona si no está claro), se borran las marcas y
+luego:
 
     git add .
-    git commit -m "Resuelvo conflicto con main"
-    git push
+    git commit -m "Resuelvo conflicto entre ramas"
+    npm run verificar
 
 ## Reglas
 
-1. Nadie sube directo a `main`.
-2. Una rama por tarea; un PR revisado por otra persona.
-3. **Nunca `git push --force`** (puede borrar el trabajo de otros).
-4. No subir `.env` ni contraseñas.
-5. Si algo no se entiende, se avisa en el chat; no se inventa ni se borra.
+1. Nadie commitea directamente en `main` sin pasar por su rama.
+2. Una rama por responsable/tema y un merge local revisado.
+3. **No hacer `git push`** ni `git push --force`.
+4. Toda tarea se marca terminada solo cuando está probada y unida a `main`.
+5. Si algo no se entiende, se avisa en el equipo; no se inventa ni se borra.
