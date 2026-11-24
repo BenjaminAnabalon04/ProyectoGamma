@@ -138,3 +138,55 @@ en esta publicación.
 
 No hagas `git push`. Si otro computador necesita el código, compártelo por otro medio acordado
 con el equipo y vuelve a ejecutar `npm run verificar` antes de desplegar.
+
+## 6. Despliegue realizado (24 de noviembre de 2026)
+
+Datos reales de esta publicación:
+
+| Elemento | Valor |
+|---|---|
+| Proyecto Railway | `proyecto-gamma` (`d8eb6df3-e197-4696-9467-813e5193ba41`) |
+| PostgreSQL | `Postgres`, base `railway` |
+| API | `gamma-api` → https://gamma-api-production.up.railway.app |
+| ERP simulado | `gamma-erp` → https://gamma-erp-production.up.railway.app |
+| Cliente Vercel | `proyecto-gamma-client` → https://proyecto-gamma-client.vercel.app |
+| Usuario Vercel | `robertramirez-cmd` |
+| Usuario Railway | `insano` |
+
+Comandos ejecutados, en este orden:
+
+    npm install -g vercel @railway/cli
+    vercel login
+    railway login --browserless
+    railway init --name proyecto-gamma --json
+    railway add --database postgres --json
+    railway add --service gamma-api --json
+    railway add --service gamma-erp --json
+    railway domain --service gamma-api --json
+    railway domain --service gamma-erp --json
+    railway variable set 'DATABASE_URL=${{ Postgres.DATABASE_URL }}' --service gamma-api --skip-deploys
+    railway variable set JWT_SECRET --stdin --service gamma-api --skip-deploys
+    railway variable set 'ERP_URL=https://${{ gamma-erp.RAILWAY_PUBLIC_DOMAIN }}' --service gamma-api --skip-deploys
+    railway variable set UPLOADS_DIR=/app/uploads --service gamma-api --skip-deploys
+    railway variable set DB_SSL=false --service gamma-api --skip-deploys
+    railway variable set NODE_ENV=production --service gamma-api --skip-deploys
+    railway service link gamma-api
+    railway volume add --mount-path /app/uploads --json
+    railway up ./server --path-as-root --service gamma-api --detach
+    railway up ./erp-mock --path-as-root --service gamma-erp --detach
+
+Para cargar las tablas se copiaron `schema.sql` y `seed.sql` a `server/database/` (solo durante
+el despliegue), se registró una clave SSH con `railway ssh keys add` y se ejecutó dentro del
+contenedor:
+
+    railway ssh --service gamma-api -- node scripts/db-reset.js
+
+El cliente se publicó con:
+
+    vercel deploy --prod --yes --project proyecto-gamma-client --create-if-missing \
+      --build-env VITE_API_URL=https://gamma-api-production.up.railway.app/api/v1
+    vercel env add VITE_API_URL production --value https://gamma-api-production.up.railway.app/api/v1 --yes
+    vercel project protection disable proyecto-gamma-client --sso
+
+La protección SSO se desactivó para que la PWA sea pública. La verificación HTTP posterior dio
+200 en el cliente, `/health`, `/health/erp` y `/erp/estado`.
