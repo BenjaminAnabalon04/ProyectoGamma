@@ -2,17 +2,26 @@
 
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { cerrarSesion, obtenerUsuario, pendientesEnvio } from '../api/api';
+import { cerrarSesion, obtenerToken, obtenerUsuario, pendientesEnvio } from '../api/api';
+import BarraNavegacion from './BarraNavegacion';
+import Icono from './Icono';
+import { ENLACES } from '../navegacion';
 
 export default function Encabezado() {
   const navigate = useNavigate();
   const usuario = obtenerUsuario();
+  const autenticado = Boolean(obtenerToken());
   const [enLinea, setEnLinea] = useState(navigator.onLine);
-  const [pendientes, setPendientes] = useState(pendientesEnvio());
+  const [pendientes, setPendientes] = useState(0);
 
   useEffect(() => {
     const actualizarRed = () => setEnLinea(navigator.onLine);
-    const actualizarCola = (evento) => setPendientes(evento.detail?.pendientes ?? 0);
+    const actualizarCola = () => {
+      void pendientesEnvio().then(setPendientes);
+    };
+
+    actualizarCola();
+
     window.addEventListener('online', actualizarRed);
     window.addEventListener('offline', actualizarRed);
     window.addEventListener('gamma:cola', actualizarCola);
@@ -29,33 +38,69 @@ export default function Encabezado() {
   }
 
   return (
-    <header className="encabezado">
-      <div className="encabezado-superior">
-        <Link to="/" className="marca">FYAG · Terreno</Link>
-        <div className="encabezado-estado">
-          <span className={enLinea ? 'chip chip-ok' : 'chip chip-alerta'}>
-            {enLinea ? 'En línea' : 'Sin conexión'}
-          </span>
-          {pendientes > 0 && <span className="chip chip-alerta">{pendientes} por enviar</span>}
-        </div>
-      </div>
+    <>
+      <header className="barra">
+        <div className="barra-contenido">
+          <Link to="/" className="marca">
+            <span className="marca-logo">
+              <Icono nombre="camion" tamano={26} />
+            </span>
+            FYAG Movilidad
+          </Link>
 
-      {usuario && (
-        <div className="encabezado-usuario">
-          <span>{usuario.nombre} · {usuario.rol}</span>
-          <button type="button" className="enlace-boton" onClick={salir}>Cerrar sesión</button>
-        </div>
-      )}
+          <div className="barra-acciones">
+            <span className={enLinea ? 'pildora-red' : 'pildora-red sin-red'}>
+              {enLinea ? 'En línea' : 'Sin conexión'}
+            </span>
 
-      <nav className="navegacion" aria-label="Navegación principal">
-        <Link to="/mis-trabajos">Mis trabajos</Link>
-        <Link to="/escaner">Escanear QR</Link>
-        <Link to="/checklist-insumos">Checklist</Link>
-        <Link to="/evidencias-firma">Fotos y firma</Link>
-        <Link to="/resumen">Resumen</Link>
-        <Link to="/presupuesto">Presupuesto</Link>
-        {usuario?.rol === 'administrador' && <Link to="/administracion">Administración</Link>}
-      </nav>
-    </header>
+            <Link
+              to="/pendientes"
+              className={pendientes > 0 ? 'boton-barra con-aviso' : 'boton-barra'}
+              aria-label="Envíos pendientes"
+              title="Envíos pendientes"
+            >
+              <Icono nombre="nube" tamano={18} />
+              {pendientes > 0 ? pendientes : null}
+            </Link>
+
+            {usuario?.rol === 'administrador' && (
+              <Link
+                to="/administracion"
+                className="boton-barra"
+                aria-label="Panel de administración"
+                title="Panel de administración"
+              >
+                <Icono nombre="edificio" tamano={18} />
+              </Link>
+            )}
+
+            {autenticado && (
+              <button
+                type="button"
+                className="boton-barra"
+                onClick={salir}
+                aria-label="Cerrar sesión"
+                title="Cerrar sesión"
+              >
+                <Icono nombre="salir" tamano={18} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {autenticado && (
+          <nav className="navegacion-superior" aria-label="Navegación principal">
+            {ENLACES.map((enlace) => (
+              <Link key={enlace.ruta} to={enlace.ruta}>
+                {enlace.nombre}
+              </Link>
+            ))}
+            {usuario?.rol === 'administrador' && <Link to="/administracion">Administración</Link>}
+          </nav>
+        )}
+      </header>
+
+      {autenticado && <BarraNavegacion />}
+    </>
   );
 }

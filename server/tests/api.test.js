@@ -77,6 +77,44 @@ test('HU-02: mis trabajos usa el técnico del token', async () => {
   assert.deepEqual(db.consultas[0].llamadas, 1);
 });
 
+test('HU-07: el listado marca completado cuando la hoja fue enviada al ERP', async () => {
+  const db = dbConConsultas([
+    {
+      contiene: 'FROM asignacion a',
+      rows: [
+        {
+          id_orden: '3',
+          id_asignacion: '7',
+          codigo_orden_erp: 'OT-8844',
+          titulo: 'Revisión',
+          descripcion: 'Revisión general',
+          tipo_servicio: 'Mantención',
+          prioridad: 'ALTA',
+          fecha_programada: null,
+          estado: 'PENDIENTE',
+          estado_servicio: 'FINALIZADO',
+          estado_envio_erp: 'ENVIADO',
+          fecha_inicio_servicio: '2026-01-01T10:00:00.000Z',
+          fecha_fin_servicio: '2026-01-01T11:00:00.000Z',
+          cliente: 'Cliente de prueba',
+          equipo: 'Equipo de prueba',
+          codigo_qr_equipo: 'QR-EQ-001',
+        },
+      ],
+    },
+  ]);
+  const { misTrabajos } = cargar('src/controllers/ordenes.controller.js', db);
+  const res = responder();
+
+  await misTrabajos({ usuario: TOKEN }, res);
+  await res.terminado;
+
+  assert.equal(res.codigo, 200);
+  assert.equal(res.datos[0].estado, 'COMPLETADO');
+  assert.equal(res.datos[0].estado_envio_erp, 'ENVIADO');
+  assert.equal(res.datos[0].fecha_fin_servicio, '2026-01-01T11:00:00.000Z');
+});
+
 test('HU-03: iniciar servicio crea la hoja con el UUID del celular', async () => {
   const db = dbConConsultas([
     {
@@ -249,6 +287,7 @@ test('HU-06: guardar evidencia escribe el archivo y registra la clave', async ()
             tipo: parametros[3],
             clave_archivo: parametros[4],
             formato: parametros[5],
+            sha256: parametros[10],
             fecha_captura: '2026-01-01',
           },
         ],
@@ -299,7 +338,7 @@ test('HU-08: el técnico crea un presupuesto sin precios', async () => {
         };
       }
       if (texto.includes('INSERT INTO detalle_presupuesto')) {
-        assert.equal(parametros.length, 5);
+        assert.equal(parametros.length, 6);
         return { rows: [] };
       }
       if (texto.includes('FROM orden_trabajo o')) return { rows: [{ id_orden: '5' }] };

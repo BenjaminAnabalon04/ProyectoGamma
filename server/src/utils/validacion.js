@@ -52,7 +52,9 @@ async function hojaDelTecnico(db, idHoja, idUsuario, opciones = {}) {
 
   const resultado = await db.query(
     `SELECT hs.id_hoja, hs.id_checklist, hs.id_asignacion, hs.estado_servicio,
-            hs.estado_envio_erp, a.id_tecnico, ot.codigo_orden_erp, ot.titulo,
+            hs.estado_envio_erp, hs.fecha_inicio, hs.fecha_fin, hs.horometro_servicio,
+            hs.actividades, hs.observaciones_tecnicas, hs.resultado, hs.codigo_hoja_erp,
+            a.id_tecnico, ot.codigo_orden_erp, ot.titulo,
             ot.tipo_servicio, ot.id_orden
        FROM hoja_servicio hs
        JOIN asignacion a ON a.id_asignacion = hs.id_asignacion

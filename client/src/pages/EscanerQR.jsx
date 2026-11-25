@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { obtenerToken, pedir } from '../api/api';
+import Icono from '../components/Icono';
 
 export default function EscanerQR() {
   const navigate = useNavigate();
@@ -82,20 +83,40 @@ export default function EscanerQR() {
   }, [buscar]);
 
   return (
-    <main className="pantalla">
-      <h1>Escáner QR del equipo</h1>
-      <p>Apunta la cámara al código QR del equipo o escribe el código impreso.</p>
+    <main className="pantalla pantalla-oscura">
+      <div className="escaner-cabecera">
+        <button
+          type="button"
+          className="boton-icono"
+          onClick={() => navigate('/mis-trabajos')}
+          aria-label="Volver a mis trabajos"
+        >
+          <Icono nombre="flecha-izquierda" />
+        </button>
+        <strong>Escáner de Terreno QR</strong>
+        <span className="boton-icono" aria-hidden="true">
+          <Icono nombre="rayo" />
+        </span>
+      </div>
 
-      <div className="tarjeta">
+      <div className="escaner-marco">
         {camaraActiva ? (
-          <video ref={videoRef} className="miniatura" playsInline muted autoPlay />
+          <video ref={videoRef} playsInline muted autoPlay />
         ) : (
-          <p className="alerta">Cámara no disponible en este dispositivo o navegador.</p>
+          <Icono nombre="qr" tamano={110} />
         )}
       </div>
 
+      <p className="escaner-ayuda">
+        {camaraActiva
+          ? 'Apunta la cámara al código QR ubicado en el chasis del equipo.'
+          : 'Cámara no disponible en este dispositivo o navegador. Escribe el código impreso.'}
+      </p>
+
+      {error && <p className="mensaje mensaje-error" role="alert">{error}</p>}
+
       <form
-        className="tarjeta"
+        className="escaner-codigo"
         onSubmit={(evento) => {
           evento.preventDefault();
           void buscar(codigo);
@@ -112,12 +133,19 @@ export default function EscanerQR() {
             autoComplete="off"
           />
         </div>
-        <button type="submit" className="boton" disabled={buscando}>
+        <button type="submit" className="boton boton-verde" disabled={buscando}>
+          <Icono nombre="check" tamano={18} />
           {buscando ? 'Buscando...' : 'Buscar orden'}
         </button>
       </form>
 
-      {error && <p className="error" role="alert">{error}</p>}
+      <button
+        type="button"
+        className="boton boton-fantasma"
+        onClick={() => navigate('/mis-trabajos')}
+      >
+        Volver a mis trabajos
+      </button>
     </main>
   );
 }

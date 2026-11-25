@@ -21,20 +21,13 @@ export default function ImagenEvidencia({
   className = 'miniatura',
   dataUrl,
 }) {
-  const [url, setUrl] = useState(dataUrl || cache.get(idEvidencia) || null);
+  const [url, setUrl] = useState(null);
   const [error, setError] = useState('');
+  const mostrada = dataUrl || cache.get(idEvidencia) || url;
 
   useEffect(() => {
-    if (dataUrl || !idEvidencia) {
-      setUrl(dataUrl || null);
-      return undefined;
-    }
-
-    const cacheado = cache.get(idEvidencia);
-    if (cacheado) {
-      setUrl(cacheado);
-      return undefined;
-    }
+    if (dataUrl || !idEvidencia) return undefined;
+    if (cache.get(idEvidencia)) return undefined;
 
     let activo = true;
     const token = obtenerToken();
@@ -63,6 +56,6 @@ export default function ImagenEvidencia({
   }, [idEvidencia, dataUrl]);
 
   if (error) return <p className="etiqueta">{error}</p>;
-  if (!url) return <p className="etiqueta">Cargando imagen...</p>;
-  return <img className={className} src={url} alt={alt} />;
+  if (!mostrada) return <p className="etiqueta">Cargando imagen...</p>;
+  return <img className={className} src={mostrada} alt={alt} />;
 }

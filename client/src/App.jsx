@@ -13,17 +13,23 @@ import MisTrabajos from './pages/MisTrabajos';
 import DetalleOrden from './pages/DetalleOrden';
 import EscanerQR from './pages/EscanerQR';
 import ChecklistInsumos from './pages/ChecklistInsumos';
+import Materiales from './pages/Materiales';
 import EvidenciasFirma from './pages/EvidenciasFirma';
 import Resumen from './pages/Resumen';
 import Presupuesto from './pages/Presupuesto';
 import Administracion from './pages/Administracion';
+import Pendientes from './pages/Pendientes';
 
 function App() {
   useEffect(() => {
     void vaciarCola();
     const alConectar = () => void vaciarCola();
     window.addEventListener('online', alConectar);
-    return () => window.removeEventListener('online', alConectar);
+    const intervalo = window.setInterval(() => void vaciarCola(), 60000);
+    return () => {
+      window.removeEventListener('online', alConectar);
+      window.clearInterval(intervalo);
+    };
   }, []);
 
   return (
@@ -39,9 +45,11 @@ function App() {
           <Route path="/orden" element={<DetalleOrden />} />
           <Route path="/escaner" element={<EscanerQR />} />
           <Route path="/checklist-insumos" element={<ChecklistInsumos />} />
+          <Route path="/materiales" element={<Materiales />} />
           <Route path="/evidencias-firma" element={<EvidenciasFirma />} />
           <Route path="/resumen" element={<Resumen />} />
           <Route path="/presupuesto" element={<Presupuesto />} />
+          <Route path="/pendientes" element={<Pendientes />} />
         </Route>
 
         <Route element={<RutaProtegida rol="administrador" />}>

@@ -20,7 +20,9 @@ function respuestaHoja(hoja) {
     id_hoja: hoja.id_hoja,
     id_checklist: Number(hoja.id_checklist),
     estado_servicio: hoja.estado_servicio,
+    estado_envio_erp: hoja.estado_envio_erp || null,
     fecha_inicio: hoja.fecha_inicio,
+    fecha_fin: hoja.fecha_fin || null,
   };
 }
 
@@ -102,7 +104,7 @@ async function obtenerHoja(req, res) {
     });
     if (!hoja) return res.status(404).json({ mensaje: 'Hoja de servicio no encontrada' });
 
-    const [respuestas, consumos, evidencias] = await Promise.all([
+    const [respuestas, consumos, evidencias, presupuestos] = await Promise.all([
       db.query(
         `SELECT id_item, pregunta_texto, resultado, observacion
            FROM respuesta_checklist
@@ -125,11 +127,19 @@ async function obtenerHoja(req, res) {
           ORDER BY fecha_captura, id_evidencia`,
         [hoja.id_hoja]
       ),
+      db.query(
+        `SELECT id_presupuesto, estado, descripcion, fecha_creacion
+           FROM presupuesto
+          WHERE id_hoja = $1
+          ORDER BY fecha_creacion DESC`,
+        [hoja.id_hoja]
+      ),
     ]);
 
     const detalle = await db.query(
       `SELECT o.id_orden, o.codigo_orden_erp, o.titulo, o.tipo_servicio,
-              c.razon_social AS cliente, e.nombre AS equipo
+              c.razon_social AS cliente, e.nombre AS equipo,
+              e.numero_serie, e.horometro_actual, e.marca, e.modelo
          FROM orden_trabajo o
          JOIN cliente c ON c.id_cliente = o.id_cliente
          LEFT JOIN equipo e ON e.id_equipo = o.id_equipo
@@ -159,6 +169,7 @@ async function obtenerHoja(req, res) {
         ...evidencia,
         url: `/uploads/${evidencia.clave_archivo}`,
       })),
+      presupuestos: presupuestos.rows,
     });
   } catch (error) {
     console.error('Error al obtener hoja:', error.message);
@@ -193,6 +204,22 @@ async function finalizar(req, res) {
       return res.json({ id_hoja: hoja.id_hoja, estado_servicio: 'FINALIZADO' });
     }
 
+    const presupuestos = await db.query(
+      `SELECT estado
+         FROM presupuesto
+        WHERE id_hoja = $1`,
+      [hoja.id_hoja]
+    );
+    if (
+      presupuestos.rows.length > 0 &&
+      !presupuestos.rows.some((fila) => fila.estado === 'APROBADO')
+    ) {
+      return res.status(409).json({
+        mensaje: 'El presupuesto del servicio debe ser aprobado por la oficina antes de finalizar.',
+        estado_presupuesto: presupuestos.rows[0].estado,
+      });
+    }
+
     const faltantesRes = await db.query(
       `SELECT i.pregunta
          FROM item_checklist i
@@ -221,7 +248,7 @@ async function finalizar(req, res) {
               observaciones_tecnicas = $4,
               resultado = $5
         WHERE id_hoja = $1
-        RETURNING estado_servicio, fecha_fin`,
+        RETURNING estado_servicio, fecha_fin, horometro_servicio, resultado`,
       [
         hoja.id_hoja,
         horometro,
@@ -235,6 +262,8 @@ async function finalizar(req, res) {
       id_hoja: hoja.id_hoja,
       estado_servicio: cierre.rows[0].estado_servicio,
       fecha_fin: cierre.rows[0].fecha_fin,
+      horometro_servicio: cierre.rows[0].horometro_servicio,
+      resultado: cierre.rows[0].resultado,
     });
   } catch (error) {
     console.error('Error al finalizar servicio:', error.message);

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { pedir } from '../api/api';
+import Icono from '../components/Icono';
 
 export default function Estado() {
   const [api, setApi] = useState({ texto: 'Consultando al servidor...' });
@@ -28,17 +29,40 @@ export default function Estado() {
       .catch((error) => setErp({ ok: false, texto: error.message }));
   }, []);
 
-  const clase = (estado) => (estado.ok === undefined ? '' : estado.ok ? 'ok' : 'error');
+  const filas = [
+    { nombre: 'Servidor', estado: api, icono: 'edificio' },
+    { nombre: 'Base de datos', estado: bd, icono: 'capas' },
+    { nombre: 'ERP simulado', estado: erp, icono: 'sincronizar' },
+  ];
 
   return (
     <main className="pantalla">
-      <h1>Estado del sistema</h1>
-      <div className="tarjeta">
-        <p className={clase(api)}>Servidor: {api.texto}</p>
-        <p className={clase(bd)}>Base de datos: {bd.texto}</p>
-        <p className={clase(erp)}>ERP simulado: {erp.texto}</p>
-      </div>
-      <Link className="boton" to="/">Volver al inicio</Link>
+      <section className="tarjeta">
+        <h1>Estado del sistema</h1>
+        <p className="tenue">Verificación de los servicios que sostienen la PWA de terreno.</p>
+
+        <div className="resumen-filas" style={{ marginTop: '14px' }}>
+          {filas.map((fila) => (
+            <div key={fila.nombre} className="fila">
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                <Icono nombre={fila.icono} tamano={16} />
+                {fila.nombre}
+              </span>
+              <strong
+                className={
+                  fila.estado.ok === undefined ? undefined : fila.estado.ok ? 'ok' : 'error'
+                }
+              >
+                {fila.estado.texto}
+              </strong>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <Link className="boton boton-claro" to="/">
+        Volver al inicio
+      </Link>
     </main>
   );
 }

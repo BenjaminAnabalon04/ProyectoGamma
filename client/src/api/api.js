@@ -1,28 +1,27 @@
 // Desarrollado por: Robert Ramírez
 
-export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
+import {
+  actualizarCola,
+  agregarCola,
+  borrarCola,
+  guardarCache,
+  leerCache,
+  limpiarCache,
+  listarCola,
+  notificarCola,
+} from './offline';
 
+export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000/api/v1';
 const CLAVE_TOKEN = 'token';
 const CLAVE_USUARIO = 'usuario';
 const CLAVE_COLA = 'gamma_cola';
 
-function leerCola() {
-  try {
-    const valor = JSON.parse(localStorage.getItem(CLAVE_COLA) || '[]');
-    return Array.isArray(valor) ? valor : [];
-  } catch {
-    return [];
-  }
-}
-
-function escribirCola(cola) {
-  localStorage.setItem(CLAVE_COLA, JSON.stringify(cola));
-  window.dispatchEvent(new CustomEvent('gamma:cola', { detail: { pendientes: cola.length } }));
-}
+let sincronizando = false;
 
 export function guardarSesion(datos) {
   localStorage.setItem(CLAVE_TOKEN, datos.token);
   localStorage.setItem(CLAVE_USUARIO, JSON.stringify(datos.usuario));
+  void sincronizar();
 }
 
 export function obtenerToken() {
@@ -38,15 +37,31 @@ export function obtenerUsuario() {
 }
 
 export function cerrarSesion() {
+  const usuario = obtenerUsuario();
+  const hoja = localStorage.getItem('hoja_actual');
+  const orden = localStorage.getItem('orden_actual');
+  if (usuario?.id_usuario && hoja) {
+    localStorage.setItem(`hoja_usuario_${usuario.id_usuario}`, hoja);
+  }
+  if (usuario?.id_usuario && orden) {
+    localStorage.setItem(`orden_usuario_${usuario.id_usuario}`, orden);
+  }
   for (const clave of [CLAVE_TOKEN, CLAVE_USUARIO, 'orden_actual', 'hoja_actual', CLAVE_COLA]) {
     localStorage.removeItem(clave);
   }
-  window.dispatchEvent(new CustomEvent('gamma:cola', { detail: { pendientes: 0 } }));
+  void limpiarCache();
+  notificarCola();
 }
 
-export function pendientesEnvio() {
-  return leerCola().length;
+export async function pendientesEnvio() {
+  const usuario = obtenerUsuario();
+  const cola = await listarCola().catch(() => []);
+  return cola.filter(
+    (item) => !item.id_usuario || String(item.id_usuario) === String(usuario?.id_usuario)
+  ).length;
 }
+
+export { listarCola };
 
 function respuestaLocal(metodo, ruta, cuerpo) {
   if (ruta === '/servicios') {
@@ -68,11 +83,7 @@ function respuestaLocal(metodo, ruta, cuerpo) {
     return { guardadas: cuerpo?.respuestas?.length || 0, pendiente: true };
   }
   if (ruta === '/evidencias') {
-    return {
-      id_evidencia: cuerpo?.id_evidencia || crypto.randomUUID(),
-      clave_archivo: null,
-      pendiente: true,
-    };
+    return { id_evidencia: cuerpo?.id_evidencia || crypto.randomUUID(), pendiente: true };
   }
   if (ruta === '/materiales/consumos') {
     return { id_consumo: cuerpo?.id_consumo || crypto.randomUUID(), pendiente: true };
@@ -96,22 +107,33 @@ export async function pedir(ruta, { metodo = 'GET', cuerpo, token, sinCola = fal
       body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
     });
   } catch {
-    if (!sinCola && metodo !== 'GET' && metodo !== 'HEAD') {
-      const cola = leerCola();
-      cola.push({
-        id: crypto.randomUUID(),
-        ruta,
-        metodo,
-        cuerpo: cuerpo ?? null,
-        token: tokenEfectivo,
-        fecha: new Date().toISOString(),
-      });
-      escribirCola(cola);
-      return respuestaLocal(metodo, ruta, cuerpo);
+    respuesta = null;
+  }
+
+  if (!respuesta) {
+    if (metodo === 'GET') {
+      const cache = await leerCache(ruta);
+      if (cache !== null) return cache;
+      const error = new Error('Sin conexión y sin copia local de estos datos.');
+      error.estado = 0;
+      throw error;
     }
-    const error = new Error('No se pudo conectar con el servidor. Revisa la conexión e intenta de nuevo.');
-    error.estado = 0;
-    throw error;
+    if (sinCola) {
+      const error = new Error('Sin conexión con el servidor.');
+      error.estado = 0;
+      throw error;
+    }
+    const usuario = obtenerUsuario();
+    await agregarCola({
+      id: crypto.randomUUID(),
+      ruta,
+      metodo,
+      cuerpo: cuerpo ?? null,
+      id_usuario: usuario?.id_usuario ?? null,
+      creado: new Date().toISOString(),
+      ultimo_error: null,
+    });
+    return respuestaLocal(metodo, ruta, cuerpo);
   }
 
   const datos = await respuesta.json().catch(() => null);
@@ -119,38 +141,69 @@ export async function pedir(ruta, { metodo = 'GET', cuerpo, token, sinCola = fal
   if (!respuesta.ok) {
     const error = new Error(datos?.mensaje || 'Error al comunicarse con el servidor');
     error.estado = respuesta.status;
-    error.datos = datos;
     throw error;
   }
 
-  if (!sinCola) void vaciarCola();
+  if (metodo === 'GET') {
+    await guardarCache(ruta, datos);
+  } else {
+    void sincronizar();
+  }
   return datos;
 }
 
-export async function vaciarCola() {
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) return 0;
+async function enviarDirecto(item) {
+  const headers = { 'Content-Type': 'application/json' };
+  const token = obtenerToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
 
-  let cola = leerCola();
-  let enviados = 0;
-
-  while (cola.length > 0) {
-    const item = cola[0];
-    try {
-      await pedir(item.ruta, {
-        metodo: item.metodo,
-        cuerpo: item.cuerpo,
-        token: item.token,
-        sinCola: true,
-      });
-      cola = cola.slice(1);
-      escribirCola(cola);
-      enviados += 1;
-    } catch (error) {
-      if (error.estado === 0 || error.estado >= 500) break;
-      cola = cola.slice(1);
-      escribirCola(cola);
-    }
+  let respuesta;
+  try {
+    respuesta = await fetch(`${API_URL}${item.ruta}`, {
+      method: item.metodo,
+      headers,
+      body: item.cuerpo === undefined ? undefined : JSON.stringify(item.cuerpo),
+    });
+  } catch {
+    const error = new Error('Sin conexión');
+    error.estado = 0;
+    throw error;
   }
 
-  return enviados;
+  const datos = await respuesta.json().catch(() => null);
+  if (!respuesta.ok) {
+    const error = new Error(datos?.mensaje || 'No se pudo sincronizar la operación');
+    error.estado = respuesta.status;
+    throw error;
+  }
+  return datos;
+}
+
+export async function sincronizar() {
+  if (sincronizando) return;
+  sincronizando = true;
+
+  try {
+    const usuario = obtenerUsuario();
+    const cola = await listarCola();
+
+    for (const item of cola) {
+      if (item.id_usuario && String(item.id_usuario) !== String(usuario?.id_usuario)) continue;
+      try {
+        await enviarDirecto(item);
+        await borrarCola(item.id);
+      } catch (error) {
+        await actualizarCola({ ...item, ultimo_error: error.message });
+        const esRed = !error.estado || error.estado >= 500;
+        const esSesion = error.estado === 401 || error.estado === 403;
+        if (esRed || esSesion) break;
+      }
+    }
+  } finally {
+    sincronizando = false;
+  }
+}
+
+export function vaciarCola() {
+  return sincronizar();
 }

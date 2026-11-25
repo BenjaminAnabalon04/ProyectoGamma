@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { guardarSesion, obtenerToken, pedir } from '../api/api';
+import Icono from '../components/Icono';
 
 export default function Login() {
   const [rut, setRut] = useState('');
@@ -34,42 +35,57 @@ export default function Login() {
   }
 
   return (
-    <main className="pantalla">
-      <h1>Iniciar sesión</h1>
-      <p>Portal de Terreno FYAG</p>
-
-      <form onSubmit={manejarEnvio} className="tarjeta">
-        <div className="campo">
-          <label htmlFor="rut" className="etiqueta">RUT</label>
-          <input
-            id="rut"
-            type="text"
-            value={rut}
-            onChange={(evento) => setRut(evento.target.value)}
-            placeholder="11.111.111-1"
-            autoComplete="username"
-            required
-          />
+    <main className="pantalla pantalla-login">
+      <section className="tarjeta login-tarjeta">
+        <div className="login-hero">
+          <span className="login-icono">
+            <Icono nombre="usuario-engranaje" tamano={38} />
+          </span>
+          <h1>Portal de Terreno FYAG</h1>
+          <p>Autenticación de Personal Operativo</p>
         </div>
 
-        <div className="campo">
-          <label htmlFor="password" className="etiqueta">Contraseña</label>
-          <input
-            id="password"
-            type="password"
-            value={password}
-            onChange={(evento) => setPassword(evento.target.value)}
-            autoComplete="current-password"
-            required
-          />
-        </div>
+        <form className="login-form" onSubmit={manejarEnvio}>
+          <div className="campo">
+            <label htmlFor="rut" className="etiqueta">RUT / ID de usuario</label>
+            <div className="campo-icono">
+              <Icono nombre="tarjeta" />
+              <input
+                id="rut"
+                type="text"
+                value={rut}
+                onChange={(evento) => setRut(evento.target.value)}
+                placeholder="12.345.678-5"
+                autoComplete="username"
+                required
+              />
+            </div>
+          </div>
 
-        {error && <p className="error" role="alert">{error}</p>}
+          <div className="campo">
+            <label htmlFor="password" className="etiqueta">Contraseña</label>
+            <div className="campo-icono">
+              <Icono nombre="candado" />
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(evento) => setPassword(evento.target.value)}
+                placeholder="Contraseña"
+                autoComplete="current-password"
+                required
+              />
+            </div>
+          </div>
 
-        <button type="submit" className="boton" disabled={cargando}>
-          {cargando ? 'Ingresando...' : 'Ingresar'}
-        </button>
-      </form>
+          {error && <p className="mensaje mensaje-error" role="alert">{error}</p>}
+
+          <button type="submit" className="boton" disabled={cargando}>
+            {cargando ? 'Ingresando...' : 'Ingresar a la PWA'}
+            {!cargando && <Icono nombre="flecha-derecha" tamano={18} />}
+          </button>
+        </form>
+      </section>
     </main>
   );
 }

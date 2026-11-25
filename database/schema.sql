@@ -159,6 +159,7 @@ CREATE TABLE presupuesto (
     id_presupuesto   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     id_cliente       BIGINT      NOT NULL REFERENCES cliente (id_cliente),
     id_orden         BIGINT      REFERENCES orden_trabajo (id_orden),
+    id_hoja          UUID        REFERENCES hoja_servicio (id_hoja),
     id_tecnico       BIGINT      NOT NULL REFERENCES usuario (id_usuario),
     id_aprobador     BIGINT      REFERENCES usuario (id_usuario),
     lugar_trabajo    VARCHAR(200),
@@ -216,4 +217,5 @@ CREATE INDEX idx_respuesta_hoja ON respuesta_checklist (id_hoja);
 CREATE INDEX idx_consumo_hoja ON consumo_material (id_hoja);
 CREATE INDEX idx_evidencia_hoja ON evidencia (id_hoja);
 CREATE INDEX idx_presupuesto_tecnico_estado ON presupuesto (id_tecnico, estado);
+CREATE INDEX idx_presupuesto_hoja ON presupuesto (id_hoja);
 CREATE INDEX idx_material_nombre ON material (nombre);

@@ -15,7 +15,18 @@ const CAMPOS_ORDEN = `
   o.estado,
   c.razon_social AS cliente,
   e.nombre AS equipo,
-  e.codigo_qr AS codigo_qr_equipo
+  e.codigo_qr AS codigo_qr_equipo,
+  e.numero_serie,
+  e.numero_ficha,
+  e.horometro_actual,
+  e.ultima_mantencion,
+  e.ubicacion,
+  e.estado_general,
+  h.estado_servicio,
+  h.estado_envio_erp,
+  h.id_hoja AS id_hoja_servicio,
+  h.fecha_inicio AS fecha_inicio_servicio,
+  h.fecha_fin AS fecha_fin_servicio
 `;
 
 const UNION_ORDEN = `
@@ -23,9 +34,26 @@ const UNION_ORDEN = `
   JOIN orden_trabajo o ON o.id_orden = a.id_orden
   JOIN cliente c ON c.id_cliente = o.id_cliente
   LEFT JOIN equipo e ON e.id_equipo = o.id_equipo
+  LEFT JOIN LATERAL (
+    SELECT hs.estado_servicio, hs.estado_envio_erp, hs.id_hoja,
+           hs.fecha_inicio, hs.fecha_fin
+      FROM hoja_servicio hs
+     WHERE hs.id_asignacion = a.id_asignacion
+     ORDER BY hs.fecha_inicio DESC NULLS LAST, hs.id_hoja DESC
+     LIMIT 1
+  ) h ON TRUE
 `;
 
 function convertir(fila) {
+  let estado = fila.estado;
+  if (fila.estado_envio_erp === 'ENVIADO' || fila.estado_envio_erp === 'SINCRONIZADO') {
+    estado = 'COMPLETADO';
+  } else if (fila.estado_servicio === 'EN_EJECUCION') {
+    estado = 'EN_EJECUCION';
+  } else if (fila.estado_servicio === 'FINALIZADO') {
+    estado = 'FINALIZADO';
+  }
+
   return {
     id_orden: Number(fila.id_orden),
     id_asignacion: Number(fila.id_asignacion),
@@ -35,10 +63,21 @@ function convertir(fila) {
     tipo_servicio: fila.tipo_servicio,
     prioridad: fila.prioridad,
     fecha_programada: fila.fecha_programada,
-    estado: fila.estado,
+    estado,
+    estado_servicio: fila.estado_servicio || null,
+    estado_envio_erp: fila.estado_envio_erp || null,
+    id_hoja: fila.id_hoja_servicio || null,
+    fecha_inicio_servicio: fila.fecha_inicio_servicio || null,
+    fecha_fin_servicio: fila.fecha_fin_servicio || null,
     cliente: fila.cliente,
     equipo: fila.equipo,
     codigo_qr_equipo: fila.codigo_qr_equipo,
+    numero_serie: fila.numero_serie,
+    numero_ficha: fila.numero_ficha,
+    horometro_actual: fila.horometro_actual === null ? null : Number(fila.horometro_actual),
+    ultima_mantencion: fila.ultima_mantencion,
+    ubicacion: fila.ubicacion,
+    estado_general: fila.estado_general,
   };
 }
 

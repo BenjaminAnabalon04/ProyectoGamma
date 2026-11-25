@@ -3,6 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { obtenerToken, pedir } from '../api/api';
+import ChipEstado from '../components/ChipEstado';
+import Icono from '../components/Icono';
+import TarjetaCabecera from '../components/TarjetaCabecera';
 
 function leerOrden(location) {
   return location.state?.orden || JSON.parse(localStorage.getItem('orden_actual') || 'null');
@@ -13,13 +16,57 @@ function leerHoja(orden) {
   return guardada && orden && guardada.id_asignacion === orden.id_asignacion ? guardada : null;
 }
 
+function numero(valor, sufijo = '') {
+  if (valor === null || valor === undefined || valor === '') return 'No registrado';
+  return `${Number(valor).toLocaleString('es-CL')}${sufijo}`;
+}
+
+function fecha(valor) {
+  if (!valor) return 'No registrada';
+  return new Date(valor).toLocaleDateString('es-CL');
+}
+
+function fechaHora(valor, vacio = 'Sin registrar') {
+  if (!valor) return vacio;
+  return new Date(valor).toLocaleString('es-CL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function etiquetaResultado(valor) {
+  const etiquetas = {
+    OPERATIVO: 'Operativo',
+    REQUIERE_SEGUIMIENTO: 'Requiere seguimiento',
+    FUERA_DE_SERVICIO: 'Fuera de servicio',
+  };
+  return etiquetas[valor] || 'Sin registrar';
+}
+
+function horometroTexto(hoja, orden) {
+  const valor = hoja?.horometro_servicio ?? orden?.horometro_actual;
+  if (valor === null || valor === undefined || valor === '') return 'Sin registrar';
+  const sufijo = hoja?.horometro_servicio === null || hoja?.horometro_servicio === undefined
+    ? ' hrs (equipo)'
+    : ' hrs';
+  return `${Number(valor).toLocaleString('es-CL')}${sufijo}`;
+}
+
 export default function DetalleOrden() {
   const location = useLocation();
   const navigate = useNavigate();
   const token = obtenerToken();
   const [orden] = useState(() => leerOrden(location));
   const [hoja, setHoja] = useState(() => leerHoja(leerOrden(location)));
-  const [horometro, setHorometro] = useState('');
+  const [presupuestos, setPresupuestos] = useState([]);
+  const [horometro, setHorometro] = useState(() =>
+    orden?.horometro_actual === null || orden?.horometro_actual === undefined
+      ? ''
+      : String(orden.horometro_actual)
+  );
   const [actividades, setActividades] = useState('');
   const [observaciones, setObservaciones] = useState('');
   const [resultado, setResultado] = useState('OPERATIVO');
@@ -27,6 +74,15 @@ export default function DetalleOrden() {
   const [error, setError] = useState('');
   const [cargando, setCargando] = useState(false);
   const pendienteLocal = hoja?.pendiente;
+  const enviado =
+    hoja?.estado_envio_erp === 'ENVIADO' || hoja?.estado_envio_erp === 'SINCRONIZADO';
+  const presupuestoAprobado = presupuestos.some(
+    (presupuesto) => presupuesto.estado === 'APROBADO'
+  );
+  const presupuestoPendiente = presupuestos.some(
+    (presupuesto) => presupuesto.estado === 'ENVIADO' || presupuesto.estado === 'EN_COSTEO'
+  );
+  const requiereAprobacion = presupuestos.length > 0 && !presupuestoAprobado;
 
   useEffect(() => {
     if (!orden) {
@@ -35,12 +91,13 @@ export default function DetalleOrden() {
   }, [orden, navigate]);
 
   useEffect(() => {
-    if (!hoja?.id_hoja) return;
+    const idHoja = hoja?.id_hoja || orden?.id_hoja;
+    if (!idHoja) return;
 
     let activo = true;
     async function sincronizar() {
       try {
-        const datos = await pedir(`/servicios/${hoja.id_hoja}`, { token });
+        const datos = await pedir(`/servicios/${idHoja}`, { token });
         if (!activo) return;
         const actualizada = {
           ...datos,
@@ -48,10 +105,16 @@ export default function DetalleOrden() {
           pendiente: pendienteLocal,
         };
         setHoja(actualizada);
+        setPresupuestos(Array.isArray(datos.presupuestos) ? datos.presupuestos : []);
         localStorage.setItem('hoja_actual', JSON.stringify(actualizada));
         setActividades(datos.actividades || '');
         setObservaciones(datos.observaciones_tecnicas || '');
-        setHorometro(datos.horometro_servicio ?? '');
+        setHorometro(
+          datos.horometro_servicio ??
+            (orden.horometro_actual === null || orden.horometro_actual === undefined
+              ? ''
+              : String(orden.horometro_actual))
+        );
         if (datos.resultado) setResultado(datos.resultado);
       } catch (err) {
         if (!activo) return;
@@ -67,7 +130,6 @@ export default function DetalleOrden() {
       activo = false;
     };
   }, [hoja?.id_hoja, pendienteLocal, orden, token]);
-
   if (!orden) return null;
 
   async function iniciarServicio() {
@@ -82,9 +144,20 @@ export default function DetalleOrden() {
         token,
         cuerpo: { id_hoja: idHoja, id_asignacion: orden.id_asignacion },
       });
-      const nuevaHoja = { ...datos, id_asignacion: orden.id_asignacion };
+      const nuevaHoja = {
+        ...datos,
+        id_asignacion: orden.id_asignacion,
+        fecha_inicio: datos.fecha_inicio || new Date().toISOString(),
+      };
       setHoja(nuevaHoja);
+      setPresupuestos([]);
       localStorage.setItem('hoja_actual', JSON.stringify(nuevaHoja));
+      setHorometro(
+        datos.horometro_servicio ??
+          (orden.horometro_actual === null || orden.horometro_actual === undefined
+            ? ''
+            : String(orden.horometro_actual))
+      );
       setMensaje(datos.pendiente ? 'Servicio registrado; se enviará al reconectar.' : 'Servicio iniciado correctamente.');
     } catch (err) {
       setError(err.message || 'No se pudo iniciar el servicio.');
@@ -102,7 +175,7 @@ export default function DetalleOrden() {
     setCargando(true);
 
     try {
-      await pedir(`/servicios/${hoja.id_hoja}/finalizar`, {
+      const datos = await pedir(`/servicios/${hoja.id_hoja}/finalizar`, {
         metodo: 'PUT',
         token,
         cuerpo: {
@@ -112,7 +185,15 @@ export default function DetalleOrden() {
           resultado,
         },
       });
-      const finalizada = { ...hoja, estado_servicio: 'FINALIZADO' };
+      const finalizada = {
+        ...hoja,
+        ...datos,
+        estado_servicio: 'FINALIZADO',
+        fecha_fin: datos.fecha_fin || new Date().toISOString(),
+        horometro_servicio:
+          datos.horometro_servicio ?? (horometro === '' ? null : Number(horometro)),
+        resultado: datos.resultado || resultado,
+      };
       setHoja(finalizada);
       localStorage.setItem('hoja_actual', JSON.stringify(finalizada));
       setMensaje('Servicio finalizado. Puedes continuar al resumen y envío.');
@@ -128,44 +209,153 @@ export default function DetalleOrden() {
 
   return (
     <main className="pantalla">
-      <h1>{orden.codigo_orden_erp}</h1>
-      <div className="tarjeta">
-        <p><strong>{orden.titulo}</strong></p>
-        <p>Tipo: {orden.tipo_servicio} · Prioridad: {orden.prioridad}</p>
-        {orden.cliente && <p>Cliente: {orden.cliente}</p>}
-        {orden.equipo && <p>Equipo: {orden.equipo}</p>}
-        <p>Estado del servicio: <strong>{hoja ? hoja.estado_servicio : orden.estado}</strong></p>
-        {hoja?.pendiente && <p className="alerta">Cambios pendientes de sincronización.</p>}
-      </div>
+      <section className="tarjeta-pasos">
+        <TarjetaCabecera
+          paso="Ficha del equipo"
+          titulo={orden.equipo || orden.titulo}
+          subtitulo={`N° Serie: ${orden.numero_serie || 'No registrada'} · Ficha ${orden.numero_ficha || 'sin número'}`}
+          volver="/mis-trabajos"
+        />
 
-      {mensaje && <p className="ok" role="status">{mensaje}</p>}
-      {error && <p className="error" role="alert">{error}</p>}
+        <div className="tarjeta-cuerpo">
+          <div className="grilla-datos">
+            <div className="dato">
+              <span>Horómetro actual</span>
+              <strong>{numero(orden.horometro_actual, ' hrs')}</strong>
+            </div>
+            <div className="dato">
+              <span>Último mantenimiento</span>
+              <strong>{fecha(orden.ultima_mantencion)}</strong>
+            </div>
+            <div className="dato">
+              <span>Ubicación actual</span>
+              <strong>{orden.ubicacion || 'No registrada'}</strong>
+            </div>
+            <div className="dato">
+              <span>Estado general</span>
+              <strong>{orden.estado_general || 'Sin evaluación'}</strong>
+            </div>
+          </div>
+
+          <ul className="detalle-lista">
+            <li>
+              <span>Orden</span>
+              <strong>{orden.codigo_orden_erp || `OT-${orden.id_orden}`}</strong>
+            </li>
+            <li>
+              <span>Servicio</span>
+              <strong>{orden.titulo}</strong>
+            </li>
+            <li>
+              <span>Tipo</span>
+              <strong>{orden.tipo_servicio}</strong>
+            </li>
+            <li>
+              <span>Cliente</span>
+              <strong>{orden.cliente || 'No indicado'}</strong>
+            </li>
+            <li>
+              <span>Prioridad</span>
+              <strong>{orden.prioridad}</strong>
+            </li>
+            <li>
+              <span>Programada</span>
+              <strong>{orden.fecha_programada ? new Date(orden.fecha_programada).toLocaleString('es-CL') : 'Sin fecha'}</strong>
+            </li>
+            <li>
+              <span>Estado del servicio</span>
+              <ChipEstado
+                estado={
+                  hoja
+                    ? hoja.estado_envio_erp === 'ENVIADO' || hoja.estado_envio_erp === 'SINCRONIZADO'
+                      ? 'COMPLETADO'
+                      : hoja.estado_servicio
+                    : orden.estado
+                }
+              />
+            </li>
+          </ul>
+
+          {hoja && (
+            <div className="resumen-filas" style={{ marginTop: '14px' }}>
+              <div className="fila">
+                <span>Inicio</span>
+                <strong>{fechaHora(hoja.fecha_inicio, 'En curso')}</strong>
+              </div>
+              <div className="fila">
+                <span>Término</span>
+                <strong>{fechaHora(hoja.fecha_fin, 'En curso')}</strong>
+              </div>
+              <div className="fila">
+                <span>Horómetro</span>
+                <strong>{horometroTexto(hoja, orden)}</strong>
+              </div>
+              <div className="fila">
+                <span>Resultado</span>
+                <strong>{etiquetaResultado(hoja.resultado)}</strong>
+              </div>
+            </div>
+          )}
+
+          {presupuestos.length > 0 && (
+            <p
+              className={
+                presupuestoAprobado
+                  ? 'mensaje mensaje-ok'
+                  : presupuestoPendiente
+                    ? 'mensaje mensaje-alerta'
+                    : 'mensaje mensaje-error'
+              }
+            >
+              {presupuestoAprobado
+                ? 'Presupuesto aprobado por la oficina. Puedes finalizar el servicio.'
+                : presupuestoPendiente
+                  ? 'Presupuesto enviado al ERP. Debes esperar la aprobación antes de finalizar.'
+                  : 'Presupuesto rechazado. Crea uno nuevo desde Presupuesto antes de finalizar.'}
+            </p>
+          )}
+
+          {hoja?.pendiente && (
+            <p className="mensaje mensaje-alerta">Cambios pendientes de sincronización.</p>
+          )}
+        </div>
+      </section>
+
+      {mensaje && <p className="mensaje mensaje-ok" role="status">{mensaje}</p>}
+      {error && <p className="mensaje mensaje-error" role="alert">{error}</p>}
 
       {!hoja && (
         <button type="button" className="boton" onClick={iniciarServicio} disabled={cargando}>
+          <Icono nombre="check" tamano={18} />
           {cargando ? 'Iniciando...' : 'Iniciar servicio'}
         </button>
       )}
 
-      {hoja && hoja.estado_servicio !== 'FINALIZADO' && (
+      {hoja && !enviado && (
         <>
-          <p>
-            Inicio registrado:{' '}
-            {hoja.fecha_inicio ? new Date(hoja.fecha_inicio).toLocaleString() : 'En curso'}
-          </p>
+          <div className="seccion-titulo">
+            <Icono nombre="checklist" tamano={20} />
+            Registro del servicio
+          </div>
 
           <div className="botonera">
             <button type="button" className="boton" onClick={() => navigate('/checklist-insumos')}>
-              Checklist y materiales
+              Checklist
             </button>
-            <button type="button" className="boton" onClick={() => navigate('/evidencias-firma')}>
+            <button type="button" className="boton boton-claro" onClick={() => navigate('/materiales')}>
+              Materiales
+            </button>
+            <button type="button" className="boton boton-claro" onClick={() => navigate('/presupuesto')}>
+              Presupuesto
+            </button>
+            <button type="button" className="boton boton-claro" onClick={() => navigate('/evidencias-firma')}>
               Fotos y firma
             </button>
           </div>
 
-          <form onSubmit={finalizarServicio} className="tarjeta">
-            <h2>Cerrar servicio</h2>
-
+          {hoja.estado_servicio !== 'FINALIZADO' && (
+            <form onSubmit={finalizarServicio} className="tarjeta">
+              <h2>Cerrar servicio</h2>
             <div className="campo">
               <label htmlFor="horometro" className="etiqueta">Horómetro del equipo</label>
               <input
@@ -212,20 +402,32 @@ export default function DetalleOrden() {
               </select>
             </div>
 
-            <button type="submit" className="boton" disabled={cargando}>
-              {cargando ? 'Finalizando...' : 'Finalizar servicio'}
-            </button>
-          </form>
+              {requiereAprobacion && (
+                <p className="mensaje mensaje-alerta" style={{ marginBottom: 0 }}>
+                  No puedes finalizar hasta que la oficina apruebe el presupuesto del servicio.
+                </p>
+              )}
+
+              <button type="submit" className="boton" disabled={cargando || requiereAprobacion}>
+                {cargando ? 'Finalizando...' : 'Finalizar servicio'}
+              </button>
+            </form>
+          )}
         </>
       )}
 
       {hoja && hoja.estado_servicio === 'FINALIZADO' && (
-        <button type="button" className="boton" onClick={() => navigate('/resumen')}>
+        <button type="button" className="boton boton-verde" onClick={() => navigate('/resumen')}>
+          <Icono nombre="flecha-derecha" tamano={18} />
           Ir a resumen y envío
         </button>
       )}
 
-      <button type="button" className="boton boton-secundario" onClick={() => navigate('/mis-trabajos')}>
+      <button
+        type="button"
+        className="boton boton-claro"
+        onClick={() => navigate('/mis-trabajos')}
+      >
         Volver a mis trabajos
       </button>
     </main>

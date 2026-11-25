@@ -35,10 +35,12 @@ servidor (`server/`) y el ERP simulado (`erp-mock/`).
 | `/estado` | Estado de servidor, base de datos y ERP | `src/pages/Estado.jsx` |
 | `/mis-trabajos` | Órdenes asignadas al técnico | `src/pages/MisTrabajos.jsx` |
 | `/orden` | Detalle, inicio y fin del servicio | `src/pages/DetalleOrden.jsx` |
-| `/checklist` | Checklist y materiales | `src/pages/ChecklistInsumos.jsx` |
-| `/evidencias` | Fotos y firma del cliente | `src/pages/EvidenciasFirma.jsx` |
+| `/checklist-insumos` | Checklist del servicio | `src/pages/ChecklistInsumos.jsx` |
+| `/materiales` | Materiales y repuestos del servicio | `src/pages/Materiales.jsx` |
+| `/evidencias-firma` | Fotos y firma del cliente | `src/pages/EvidenciasFirma.jsx` |
 | `/resumen` | Resumen y envío al ERP | `src/pages/Resumen.jsx` |
-| `/presupuesto` | Presupuesto en terreno | `src/pages/Presupuesto.jsx` |
+| `/presupuesto` | Presupuesto del servicio | `src/pages/Presupuesto.jsx` |
+| `/pendientes` | Envíos pendientes de sincronización | `src/pages/Pendientes.jsx` |
 | `/escaner` | Escáner QR con ingreso manual | `src/pages/EscanerQR.jsx` |
 | `/administracion` | Panel del administrador | `src/pages/Administracion.jsx` |
 

@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cerrarSesion, obtenerToken, pedir } from '../api/api';
 import ImagenEvidencia from '../components/ImagenEvidencia';
+import Icono from '../components/Icono';
+import TarjetaCabecera from '../components/TarjetaCabecera';
 import { rutValido } from '../utils/rut';
 
 const FORMATOS = {
@@ -58,6 +60,17 @@ async function comprimirFoto(archivo) {
     dataUrl = lienzo.toDataURL('image/jpeg', calidad);
   }
   return { dataUrl, formato: 'jpg' };
+}
+
+function fechaCorta(valor) {
+  if (!valor) return 'Sin fecha';
+  return new Date(valor).toLocaleString('es-CL', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 export default function EvidenciasFirma() {
@@ -124,7 +137,7 @@ export default function EvidenciasFirma() {
     contexto.lineWidth = 3;
     contexto.lineCap = 'round';
     contexto.lineJoin = 'round';
-    contexto.strokeStyle = '#0b1f33';
+    contexto.strokeStyle = '#123762';
     contexto.beginPath();
     contexto.moveTo(punto.x, punto.y);
     dibujandoRef.current = true;
@@ -196,6 +209,8 @@ export default function EvidenciasFirma() {
           id_evidencia: respuesta.id_evidencia || idEvidencia,
           id_hoja: hoja.id_hoja,
           ...detalles,
+          latitud: coordenadas?.latitud ?? null,
+          longitud: coordenadas?.longitud ?? null,
           dataUrl: archivo,
           sha256: respuesta.sha256 ?? null,
           fecha_captura: new Date().toISOString(),
@@ -277,143 +292,172 @@ export default function EvidenciasFirma() {
 
   return (
     <main className="pantalla">
-      <h1>Fotos y firma del cliente</h1>
+      <section className="tarjeta-pasos">
+        <TarjetaCabecera
+          paso="Paso 2 de 3"
+          titulo="Evidencias y Validación del Cliente"
+          subtitulo={orden ? `${orden.codigo_orden_erp || `OT-${orden.id_orden}`} · ${orden.equipo || orden.titulo}` : undefined}
+          volver="/orden"
+        />
 
-      {orden && (
-        <p>
-          Orden: <strong>{orden.codigo_orden_erp}</strong> ·{' '}
-          <strong>{orden.titulo}</strong>
-        </p>
-      )}
-
-      {!hoja?.id_hoja && (
-        <div className="tarjeta">
-          <p className="alerta">
-            Primero inicia el servicio en el detalle de la orden para poder adjuntar evidencias.
-          </p>
-          <button type="button" className="boton" onClick={() => navigate('/orden')}>
-            Ir al detalle de la orden
-          </button>
-        </div>
-      )}
-
-      {cargando && <p>Cargando evidencias...</p>}
-      {mensaje && <p className="ok" role="status">{mensaje}</p>}
-      {error && <p className="error" role="alert">{error}</p>}
-
-      {hoja?.id_hoja && (
-        <>
-          <section className="tarjeta">
-            <h2>Fotos del servicio</h2>
-            <div className="campo">
-              <label htmlFor="foto-servicio" className="etiqueta">Seleccionar foto</label>
-              <input
-                id="foto-servicio"
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                onChange={(evento) => void subirFoto(evento)}
-                disabled={guardando}
-              />
-            </div>
-            <button type="button" className="boton boton-secundario" onClick={obtenerUbicacion}>
-              Adjuntar ubicación actual
-            </button>
-            {coordenadas && (
-              <p className="ok">
-                Ubicación: {coordenadas.latitud.toFixed(5)}, {coordenadas.longitud.toFixed(5)}
+        <div className="tarjeta-cuerpo">
+          {!hoja?.id_hoja && (
+            <>
+              <p className="mensaje mensaje-alerta">
+                Primero inicia el servicio en la ficha de la orden para poder adjuntar evidencias.
               </p>
-            )}
+              <button type="button" className="boton" onClick={() => navigate('/orden')}>
+                Ir a la ficha de la orden
+              </button>
+            </>
+          )}
 
-            {fotos.length === 0 && <p>No hay fotos registradas en este servicio.</p>}
-            <ul className="lista-simple">
-              {fotos.map((foto) => (
-                <li key={foto.id_evidencia}>
-                  <strong>Foto</strong>
-                  <ImagenEvidencia
-                    idEvidencia={foto.id_evidencia}
-                    dataUrl={foto.dataUrl}
-                    alt="Evidencia del servicio"
+          {cargando && <p className="vacio">Cargando evidencias...</p>}
+          {mensaje && <p className="mensaje mensaje-ok" role="status">{mensaje}</p>}
+          {error && <p className="mensaje mensaje-error" role="alert">{error}</p>}
+
+          {hoja?.id_hoja && (
+            <>
+              <div className="seccion-titulo">
+                <Icono nombre="camara" tamano={20} />
+                Fotografías del servicio
+              </div>
+
+              <div className="fotos-grid">
+                {fotos.map((foto) => (
+                  <div key={foto.id_evidencia} className="foto">
+                    <ImagenEvidencia
+                      idEvidencia={foto.id_evidencia}
+                      dataUrl={foto.dataUrl}
+                      alt="Evidencia del servicio"
+                      className=""
+                    />
+                    <div className="foto-pie">
+                      {foto.latitud !== null && foto.latitud !== undefined && (
+                        <div>
+                          <Icono nombre="pin" tamano={11} />
+                          {Number(foto.latitud).toFixed(3)}, {Number(foto.longitud).toFixed(3)}
+                        </div>
+                      )}
+                      <div>{fechaCorta(foto.fecha_captura)}</div>
+                    </div>
+                  </div>
+                ))}
+
+                <label className="foto-agregar">
+                  <Icono nombre="mas" tamano={30} />
+                  <span>{guardando ? 'Guardando...' : 'Capturar foto'}</span>
+                  <input
+                    type="file"
+                    accept="image/jpeg,image/png,image/webp"
+                    onChange={(evento) => void subirFoto(evento)}
+                    disabled={guardando}
                   />
-                  <span className="etiqueta">
-                    {foto.pendiente ? 'Por enviar' : new Date(foto.fecha_captura).toLocaleString()}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section className="tarjeta">
-            <h2>Firma del cliente o responsable</h2>
-
-            <form onSubmit={guardarFirma}>
-              <div className="campo">
-                <label htmlFor="nombre-firmante" className="etiqueta">Nombre de quien firma</label>
-                <input
-                  id="nombre-firmante"
-                  type="text"
-                  value={nombreFirmante}
-                  onChange={(evento) => setNombreFirmante(evento.target.value)}
-                  placeholder="Nombre completo"
-                />
+                </label>
               </div>
 
-              <div className="campo">
-                <label htmlFor="rut-firmante" className="etiqueta">RUT de quien firma</label>
-                <input
-                  id="rut-firmante"
-                  type="text"
-                  value={rutFirmante}
-                  onChange={(evento) => setRutFirmante(evento.target.value)}
-                  placeholder="12.345.678-9"
-                />
+              <button
+                type="button"
+                className="boton boton-claro boton-compacto"
+                onClick={obtenerUbicacion}
+                style={{ marginTop: '12px' }}
+              >
+                <Icono nombre="pin" tamano={16} />
+                Adjuntar ubicación actual
+              </button>
+              {coordenadas && (
+                <p className="micro" style={{ marginTop: '8px' }}>
+                  Ubicación: {coordenadas.latitud.toFixed(5)}, {coordenadas.longitud.toFixed(5)}
+                </p>
+              )}
+
+              <div className="seccion-titulo">
+                <Icono nombre="documento" tamano={20} />
+                Firma de conformidad
               </div>
 
-              <canvas
-                ref={lienzoRef}
-                className="firma-canvas"
-                width="600"
-                height="200"
-                onPointerDown={iniciarTrazo}
-                onPointerMove={continuarTrazo}
-                onPointerUp={terminarTrazo}
-                onPointerLeave={terminarTrazo}
-                onPointerCancel={terminarTrazo}
-                aria-label="Área para dibujar la firma"
-              />
+              <form onSubmit={guardarFirma} className="firma-caja">
+                <div className="campo">
+                  <label htmlFor="nombre-firmante" className="etiqueta">Nombre de quien firma</label>
+                  <input
+                    id="nombre-firmante"
+                    type="text"
+                    value={nombreFirmante}
+                    onChange={(evento) => setNombreFirmante(evento.target.value)}
+                    placeholder="Nombre completo"
+                  />
+                </div>
 
-              <div className="botonera">
-                <button type="button" className="boton boton-secundario" onClick={limpiarFirma}>
-                  Limpiar firma
-                </button>
+                <div className="campo">
+                  <label htmlFor="rut-firmante" className="etiqueta">RUT de quien firma</label>
+                  <input
+                    id="rut-firmante"
+                    type="text"
+                    value={rutFirmante}
+                    onChange={(evento) => setRutFirmante(evento.target.value)}
+                    placeholder="12.345.678-5"
+                  />
+                </div>
+
+                <div className="firma-cabecera">
+                  <span className="etiqueta" style={{ margin: 0 }}>Firma</span>
+                  <button type="button" className="enlace-boton" onClick={limpiarFirma}>
+                    Limpiar firma
+                  </button>
+                </div>
+
+                <canvas
+                  ref={lienzoRef}
+                  className="firma-canvas"
+                  width="600"
+                  height="200"
+                  onPointerDown={iniciarTrazo}
+                  onPointerMove={continuarTrazo}
+                  onPointerUp={terminarTrazo}
+                  onPointerLeave={terminarTrazo}
+                  onPointerCancel={terminarTrazo}
+                  aria-label="Área para dibujar la firma"
+                />
+                <p className="firma-ayuda">Dibuja con el dedo o puntero en la zona delimitada.</p>
+
                 <button type="submit" className="boton" disabled={guardando}>
                   {guardando ? 'Guardando...' : 'Guardar firma'}
                 </button>
-              </div>
-            </form>
+              </form>
 
-            {firmas.length === 0 && <p>No hay firmas registradas en este servicio.</p>}
-            <ul className="lista-simple">
-              {firmas.map((firma) => (
-                <li key={firma.id_evidencia}>
-                  <strong>{firma.nombre_firmante || 'Firma registrada'}</strong>
-                  <span>{firma.rut_firmante}</span>
-                  <ImagenEvidencia
-                    idEvidencia={firma.id_evidencia}
-                    dataUrl={firma.dataUrl}
-                    alt="Firma capturada"
-                  />
-                  <span className="etiqueta">
-                    {firma.pendiente ? 'Por enviar' : new Date(firma.fecha_captura).toLocaleString()}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </>
-      )}
+              {firmas.length > 0 && (
+                <ul className="lista-simple">
+                  {firmas.map((firma) => (
+                    <li key={firma.id_evidencia}>
+                      <div className="firma-cabecera">
+                        <strong>{firma.nombre_firmante || 'Firma registrada'}</strong>
+                        <span className={firma.pendiente ? 'pildora pildora-proceso' : 'pildora pildora-ok'}>
+                          {firma.pendiente ? 'Por enviar' : 'Guardada'}
+                        </span>
+                      </div>
+                      <span className="micro">{firma.rut_firmante}</span>
+                      <ImagenEvidencia
+                        idEvidencia={firma.id_evidencia}
+                        dataUrl={firma.dataUrl}
+                        alt="Firma capturada"
+                      />
+                      <span className="micro">{fechaCorta(firma.fecha_captura)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </>
+          )}
+        </div>
+      </section>
 
-      <button type="button" className="boton boton-secundario" onClick={() => navigate('/orden')}>
-        Volver al detalle de la orden
+      <button type="button" className="boton" onClick={() => navigate('/resumen')}>
+        Revisar Resumen y Sincronizar
+        <Icono nombre="flecha-derecha" tamano={18} />
+      </button>
+
+      <button type="button" className="boton boton-claro" onClick={() => navigate('/orden')}>
+        Volver a la ficha de la orden
       </button>
     </main>
   );

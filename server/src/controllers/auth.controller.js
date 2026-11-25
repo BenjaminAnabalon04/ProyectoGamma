@@ -21,7 +21,7 @@ async function login(req, res) {
 
   try {
     const resultado = await db.query(
-      `SELECT id_usuario, nombre, rol, password_hash, intentos_fallidos, bloqueado_hasta
+      `SELECT id_usuario, nombre, rol, zona, password_hash, intentos_fallidos, bloqueado_hasta
          FROM usuario
         WHERE UPPER(REPLACE(REPLACE(REPLACE(rut, '.', ''), '-', ''), ' ', '')) = $1
           AND activo = TRUE`,
@@ -75,7 +75,7 @@ async function login(req, res) {
 
     return res.json({
       token,
-      usuario: { id_usuario, nombre: usuario.nombre, rol: usuario.rol },
+      usuario: { id_usuario, nombre: usuario.nombre, rol: usuario.rol, zona: usuario.zona || null },
     });
   } catch (error) {
     console.error('Error en login:', error.message);
