@@ -17,6 +17,7 @@ const materialesRoutes = require('./src/routes/materiales.routes');
 const evidenciasRoutes = require('./src/routes/evidencias.routes');
 const presupuestosRoutes = require('./src/routes/presupuestos.routes');
 const adminRoutes = require('./src/routes/admin.routes');
+const { reintentarEnvios } = require('./src/controllers/servicios.controller');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -46,6 +47,13 @@ if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Servidor escuchando en http://localhost:${PORT}`);
   });
+
+  const reintentos = setInterval(() => {
+    reintentarEnvios().catch((error) => {
+      console.error('Error en el worker de envíos:', error.message);
+    });
+  }, 60000);
+  reintentos.unref();
 }
 
 module.exports = app;

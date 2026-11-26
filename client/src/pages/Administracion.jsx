@@ -19,6 +19,104 @@ function fecha(valor) {
   return new Date(valor).toLocaleDateString('es-CL');
 }
 
+function PresupuestoAdmin({ presupuesto, procesando, onGuardar, onResolver }) {
+  const [precios, setPrecios] = useState(() =>
+    Object.fromEntries(
+      (presupuesto.detalles || []).map((detalle) => [
+        detalle.id_detalle,
+        detalle.precio_unitario ?? '',
+      ])
+    )
+  );
+
+  const total = (presupuesto.detalles || []).reduce(
+    (suma, detalle) =>
+      suma + Number(detalle.cantidad || 0) * Number(precios[detalle.id_detalle] || 0),
+    0
+  );
+
+  const listaPrecios = (presupuesto.detalles || []).map((detalle) => ({
+    id_detalle: detalle.id_detalle,
+    precio_unitario: Number(precios[detalle.id_detalle] || 0),
+  }));
+
+  return (
+    <div className="presupuesto-card">
+      <div className="orden-cabecera">
+        <strong>{presupuesto.descripcion || 'Presupuesto'}</strong>
+        <ChipEstado estado={presupuesto.estado} />
+      </div>
+      <p className="micro" style={{ marginTop: '6px' }}>
+        {presupuesto.codigo_orden_erp || 'Sin orden'} · {fecha(presupuesto.fecha_creacion)}
+      </p>
+
+      <ul className="lista-simple">
+        {(presupuesto.detalles || []).map((detalle) => (
+          <li key={detalle.id_detalle}>
+            <span>
+              {detalle.descripcion} · {Number(detalle.cantidad)} {detalle.unidad_medida || ''}
+            </span>
+            <div className="campo-fila" style={{ marginTop: '6px' }}>
+              <div>
+                <label htmlFor={`precio-${detalle.id_detalle}`} className="etiqueta">
+                  Precio unitario
+                </label>
+                <input
+                  id={`precio-${detalle.id_detalle}`}
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={precios[detalle.id_detalle] ?? ''}
+                  onChange={(evento) =>
+                    setPrecios((previo) => ({
+                      ...previo,
+                      [detalle.id_detalle]: evento.target.value,
+                    }))
+                  }
+                  placeholder="0"
+                />
+              </div>
+              <div>
+                <span className="etiqueta">Subtotal</span>
+                <strong>{dinero(Number(precios[detalle.id_detalle] || 0) * Number(detalle.cantidad || 0))}</strong>
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+
+      <p className="micro">Total estimado: {dinero(total)}</p>
+
+      <div className="botonera">
+        <button
+          type="button"
+          className="boton boton-claro boton-compacto"
+          disabled={procesando === presupuesto.id_presupuesto}
+          onClick={() => void onGuardar(presupuesto.id_presupuesto, listaPrecios)}
+        >
+          Guardar costeo
+        </button>
+        <button
+          type="button"
+          className="boton boton-verde boton-compacto"
+          disabled={procesando === presupuesto.id_presupuesto || total <= 0}
+          onClick={() => void onResolver(presupuesto.id_presupuesto, true, listaPrecios, total)}
+        >
+          Aprobar presupuesto
+        </button>
+        <button
+          type="button"
+          className="boton boton-peligro boton-compacto"
+          disabled={procesando === presupuesto.id_presupuesto}
+          onClick={() => void onResolver(presupuesto.id_presupuesto, false)}
+        >
+          Rechazar
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function Administracion() {
   const usuario = obtenerUsuario();
   const [resumen, setResumen] = useState(null);
@@ -50,7 +148,7 @@ export default function Administracion() {
     };
   }, [version]);
 
-  async function resolver(id, aprobado) {
+  async function resolver(id, aprobado, precios = [], total = 0) {
     setProcesando(id);
     setError('');
     setMensaje('');
@@ -58,7 +156,8 @@ export default function Administracion() {
       const presupuesto = presupuestos.find((item) => item.id_presupuesto === id);
       const cuerpo = aprobado
         ? {
-            monto_aprobado: presupuesto?.monto_estimado || 1,
+            monto_aprobado: total > 0 ? total : presupuesto?.monto_estimado || 1,
+            precios,
             observacion_oficina: 'Aprobado desde el panel de administración',
           }
         : { observacion_oficina: 'Rechazado desde el panel de administración' };
@@ -73,7 +172,27 @@ export default function Administracion() {
     }
   }
 
-  const pendientes = presupuestos.filter((presupuesto) => presupuesto.estado === 'ENVIADO');
+  async function guardarCosteo(id, precios) {
+    setProcesando(id);
+    setError('');
+    setMensaje('');
+    try {
+      await pedir(`/presupuestos/${id}/costeo`, {
+        metodo: 'PUT',
+        cuerpo: { precios },
+      });
+      setMensaje('Costeo guardado. El presupuesto queda en costeo.');
+      setVersion((valor) => valor + 1);
+    } catch (err) {
+      setError(err.message || 'No se pudo guardar el costeo.');
+    } finally {
+      setProcesando('');
+    }
+  }
+
+  const pendientes = presupuestos.filter((presupuesto) =>
+    ['ENVIADO', 'EN_COSTEO'].includes(presupuesto.estado)
+  );
 
   return (
     <main className="pantalla pantalla-admin">
@@ -159,43 +278,13 @@ export default function Administracion() {
           )}
 
           {pendientes.map((presupuesto) => (
-            <div key={presupuesto.id_presupuesto} className="presupuesto-card">
-              <div className="orden-cabecera">
-                <strong>{presupuesto.descripcion || 'Presupuesto'}</strong>
-                <span className="monto">{dinero(presupuesto.monto_estimado)}</span>
-              </div>
-              <p className="micro" style={{ marginTop: '6px' }}>
-                {presupuesto.codigo_orden_erp || 'Sin orden'} · {fecha(presupuesto.fecha_creacion)}
-              </p>
-              <ul className="lista-simple">
-                {(presupuesto.detalles || []).map((detalle) => (
-                  <li key={detalle.id_detalle}>
-                    <span>
-                      {detalle.descripcion} · {Number(detalle.cantidad)} {detalle.unidad_medida || ''}
-                    </span>
-                    <span className="tenue">{dinero(detalle.precio_unitario)}</span>
-                  </li>
-                ))}
-              </ul>
-              <div className="botonera">
-                <button
-                  type="button"
-                  className="boton boton-verde boton-compacto"
-                  disabled={procesando === presupuesto.id_presupuesto}
-                  onClick={() => void resolver(presupuesto.id_presupuesto, true)}
-                >
-                  Aprobar presupuesto
-                </button>
-                <button
-                  type="button"
-                  className="boton boton-peligro boton-compacto"
-                  disabled={procesando === presupuesto.id_presupuesto}
-                  onClick={() => void resolver(presupuesto.id_presupuesto, false)}
-                >
-                  Rechazar
-                </button>
-              </div>
-            </div>
+            <PresupuestoAdmin
+              key={presupuesto.id_presupuesto}
+              presupuesto={presupuesto}
+              procesando={procesando}
+              onGuardar={guardarCosteo}
+              onResolver={resolver}
+            />
           ))}
 
           {presupuestos.length > pendientes.length && (
@@ -203,7 +292,10 @@ export default function Administracion() {
               <summary>Historial de presupuestos</summary>
               <ul className="lista-simple">
                 {presupuestos
-                  .filter((presupuesto) => presupuesto.estado !== 'ENVIADO')
+                  .filter(
+                    (presupuesto) =>
+                      !['ENVIADO', 'EN_COSTEO'].includes(presupuesto.estado)
+                  )
                   .map((presupuesto) => (
                     <li key={presupuesto.id_presupuesto}>
                       <span>{presupuesto.descripcion || 'Presupuesto'}</span>

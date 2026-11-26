@@ -331,6 +331,125 @@ async function finalizar(req, res) {
   }
 }
 
+async function construirPaquete(idHoja) {
+  const completo = await db.query(
+    `SELECT h.fecha_inicio, h.fecha_fin, h.horometro_servicio, h.actividades,
+            h.observaciones_tecnicas, h.resultado, o.codigo_orden_erp, o.titulo
+       FROM hoja_servicio h
+       JOIN asignacion a ON a.id_asignacion = h.id_asignacion
+       JOIN orden_trabajo o ON o.id_orden = a.id_orden
+      WHERE h.id_hoja = $1`,
+    [idHoja]
+  );
+  if (completo.rows.length === 0) {
+    throw new Error('Hoja de servicio no encontrada');
+  }
+
+  const [respuestas, consumos, evidencias] = await Promise.all([
+    db.query(
+      `SELECT id_item, pregunta_texto, resultado, observacion
+         FROM respuesta_checklist
+        WHERE id_hoja = $1
+        ORDER BY id_item`,
+      [idHoja]
+    ),
+    db.query(
+      `SELECT m.codigo_material_erp, m.nombre, cm.cantidad, m.unidad_medida
+         FROM consumo_material cm
+         JOIN material m ON m.id_material = cm.id_material
+        WHERE cm.id_hoja = $1
+        ORDER BY cm.fecha_registro`,
+      [idHoja]
+    ),
+    db.query(
+      `SELECT tipo, clave_archivo, formato, fecha_captura, latitud, longitud,
+              nombre_firmante, rut_firmante
+         FROM evidencia
+        WHERE id_hoja = $1
+        ORDER BY fecha_captura`,
+      [idHoja]
+    ),
+  ]);
+
+  return {
+    id_hoja: idHoja,
+    ...completo.rows[0],
+    respuestas: respuestas.rows,
+    consumos: consumos.rows,
+    evidencias: await Promise.all(evidencias.rows.map(leerEvidencia)),
+  };
+}
+
+async function enviarPaqueteAlErp(paquete) {
+  const resp = await fetch(`${process.env.ERP_URL || 'http://localhost:4000'}/erp/servicios`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(paquete),
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!resp.ok) throw new Error(`El ERP respondió ${resp.status}`);
+  const respuestaErp = await resp.json();
+  if (!respuestaErp?.recibido) throw new Error('El ERP no confirmó la recepción');
+  return respuestaErp;
+}
+
+async function marcarEnviado(idHoja, codigo) {
+  await db.query(
+    `UPDATE hoja_servicio
+        SET estado_envio_erp = 'ENVIADO',
+            codigo_hoja_erp = $2,
+            fecha_envio_erp = now(),
+            intentos_envio = 0,
+            proximo_intento_envio = NULL
+      WHERE id_hoja = $1`,
+    [idHoja, texto(codigo, 40)]
+  );
+}
+
+async function marcarErrorEnvio(idHoja, mensaje) {
+  const actual = await db.query(
+    `SELECT COALESCE(intentos_envio, 0) AS intentos
+       FROM hoja_servicio
+      WHERE id_hoja = $1`,
+    [idHoja]
+  );
+  if (actual.rows.length === 0) return;
+  const intentos = Number(actual.rows[0].intentos) + 1;
+  const minutos = [1, 2, 4, 8, 16][Math.min(intentos - 1, 4)];
+  await db.query(
+    `UPDATE hoja_servicio
+        SET estado_envio_erp = 'ERROR',
+            intentos_envio = $2,
+            proximo_intento_envio = now() + ($3 || ' minutes')::interval
+      WHERE id_hoja = $1`,
+    [idHoja, intentos, String(minutos)]
+  );
+}
+
+async function reintentarEnvios() {
+  const pendientes = await db.query(
+    `SELECT id_hoja
+       FROM hoja_servicio
+      WHERE estado_servicio = 'FINALIZADO'
+        AND estado_envio_erp = 'ERROR'
+        AND (proximo_intento_envio IS NULL OR proximo_intento_envio <= now())
+      ORDER BY proximo_intento_envio NULLS FIRST
+      LIMIT 5`
+  );
+
+  for (const fila of pendientes.rows) {
+    try {
+      const paquete = await construirPaquete(fila.id_hoja);
+      const respuesta = await enviarPaqueteAlErp(paquete);
+      await marcarEnviado(fila.id_hoja, respuesta.codigo_hoja_erp);
+    } catch (error) {
+      console.error('Error al reintentar envío:', error.message);
+      await marcarErrorEnvio(fila.id_hoja, error.message);
+    }
+  }
+}
+
+
 async function enviar(req, res) {
   if (!esUuid(req.params.id_hoja)) {
     return res.status(400).json({ mensaje: 'id_hoja debe ser un UUID válido' });
@@ -371,90 +490,28 @@ async function enviar(req, res) {
       });
     }
 
-    const completo = await db.query(
-      `SELECT h.fecha_inicio, h.fecha_fin, h.horometro_servicio, h.actividades,
-              h.observaciones_tecnicas, h.resultado, o.codigo_orden_erp, o.titulo
-         FROM hoja_servicio h
-         JOIN asignacion a ON a.id_asignacion = h.id_asignacion
-         JOIN orden_trabajo o ON o.id_orden = a.id_orden
-        WHERE h.id_hoja = $1`,
-      [hoja.id_hoja]
-    );
+    const paquete = await construirPaquete(hoja.id_hoja);
 
-    const [respuestas, consumos, evidencias] = await Promise.all([
-      db.query(
-        `SELECT id_item, pregunta_texto, resultado, observacion
-           FROM respuesta_checklist
-          WHERE id_hoja = $1
-          ORDER BY id_item`,
-        [hoja.id_hoja]
-      ),
-      db.query(
-        `SELECT m.codigo_material_erp, m.nombre, cm.cantidad, m.unidad_medida
-           FROM consumo_material cm
-           JOIN material m ON m.id_material = cm.id_material
-          WHERE cm.id_hoja = $1
-          ORDER BY cm.fecha_registro`,
-        [hoja.id_hoja]
-      ),
-      db.query(
-        `SELECT tipo, clave_archivo, formato, fecha_captura, latitud, longitud,
-                nombre_firmante, rut_firmante
-           FROM evidencia
-          WHERE id_hoja = $1
-          ORDER BY fecha_captura`,
-        [hoja.id_hoja]
-      ),
-    ]);
-
-    const paquete = {
-      id_hoja: hoja.id_hoja,
-      ...completo.rows[0],
-      respuestas: respuestas.rows,
-      consumos: consumos.rows,
-      evidencias: await Promise.all(evidencias.rows.map(leerEvidencia)),
-    };
-
-    let respuestaErp;
     try {
-      const resp = await fetch(`${process.env.ERP_URL || 'http://localhost:4000'}/erp/servicios`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(paquete),
-        signal: AbortSignal.timeout(10000),
+      const respuestaErp = await enviarPaqueteAlErp(paquete);
+      await marcarEnviado(hoja.id_hoja, respuestaErp.codigo_hoja_erp);
+
+      return res.json({
+        estado_envio_erp: 'ENVIADO',
+        codigo_hoja_erp: respuestaErp.codigo_hoja_erp,
       });
-      if (!resp.ok) throw new Error(`El ERP respondió ${resp.status}`);
-      respuestaErp = await resp.json();
-      if (!respuestaErp?.recibido) throw new Error('El ERP no confirmó la recepción');
     } catch (errorErp) {
       console.error('Error al enviar al ERP:', errorErp.message);
-      await db.query(
-        "UPDATE hoja_servicio SET estado_envio_erp = 'ERROR' WHERE id_hoja = $1",
-        [hoja.id_hoja]
-      );
+      await marcarErrorEnvio(hoja.id_hoja, errorErp.message);
       return res.status(502).json({
-        mensaje: 'No se pudo enviar al ERP. Puedes reintentar.',
+        mensaje: 'No se pudo enviar al ERP. El sistema reintentará automáticamente.',
         estado_envio_erp: 'ERROR',
       });
     }
-
-    await db.query(
-      `UPDATE hoja_servicio
-          SET estado_envio_erp = 'ENVIADO',
-              codigo_hoja_erp = $2,
-              fecha_envio_erp = now()
-        WHERE id_hoja = $1`,
-      [hoja.id_hoja, texto(respuestaErp.codigo_hoja_erp, 40)]
-    );
-
-    return res.json({
-      estado_envio_erp: 'ENVIADO',
-      codigo_hoja_erp: respuestaErp.codigo_hoja_erp,
-    });
   } catch (error) {
     console.error('Error al enviar servicio:', error.message);
     return res.status(500).json({ mensaje: 'No se pudo enviar el servicio' });
   }
 }
 
-module.exports = { iniciar, obtenerHoja, finalizar, enviar };
+module.exports = { iniciar, obtenerHoja, finalizar, enviar, reintentarEnvios };

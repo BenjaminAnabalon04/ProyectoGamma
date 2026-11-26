@@ -77,6 +77,7 @@ export default function MisTrabajos() {
             PENDIENTE: 0,
             EN_EJECUCION: 1,
             FINALIZADO: 2,
+            EN_REVISION: 2,
             COMPLETADO: 3,
           };
           const estadoLocal =
@@ -85,17 +86,35 @@ export default function MisTrabajos() {
               ? 'COMPLETADO'
               : candidata.estado_servicio;
           const estadoServidor = orden.estado;
-          const estado =
+          let estado =
             (rango[estadoLocal] ?? 0) > (rango[estadoServidor] ?? 0)
               ? estadoLocal
               : estadoServidor;
           const usaEstadoLocal = (rango[estadoLocal] ?? 0) > (rango[estadoServidor] ?? 0);
 
+          const borradorLocal = leerBorrador(candidata.id_hoja) || {};
+          const presupuestosLocal = Array.isArray(borradorLocal.presupuestos)
+            ? borradorLocal.presupuestos
+            : [];
+          const presupuestoLocalPendiente = presupuestosLocal.some(
+            (presupuesto) =>
+              presupuesto.estado === 'ENVIADO' || presupuesto.estado === 'EN_COSTEO'
+          );
+          const presupuestoServidorPendiente =
+            orden.presupuesto_estado === 'ENVIADO' || orden.presupuesto_estado === 'EN_COSTEO';
+          if (
+            estado === 'FINALIZADO' &&
+            (presupuestoServidorPendiente || presupuestoLocalPendiente)
+          ) {
+            estado = 'EN_REVISION';
+          }
+
           return {
             ...orden,
             id_hoja: usaEstadoLocal ? candidata.id_hoja : orden.id_hoja,
             estado,
-            estado_servicio: estado === 'COMPLETADO' ? 'FINALIZADO' : estado,
+            estado_servicio:
+              estado === 'COMPLETADO' || estado === 'EN_REVISION' ? 'FINALIZADO' : estado,
             estado_envio_erp:
               orden.estado_envio_erp === 'ENVIADO' ||
               orden.estado_envio_erp === 'SINCRONIZADO'

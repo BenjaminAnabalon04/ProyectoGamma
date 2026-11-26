@@ -58,6 +58,26 @@ function horometroTexto(hoja, orden) {
   return `${Number(valor).toLocaleString('es-CL')}${sufijo}`;
 }
 
+function unirPresupuestos(servidor, local) {
+  const mapa = new Map();
+  for (const item of Array.isArray(servidor) ? servidor : []) {
+    mapa.set(String(item.id_presupuesto), item);
+  }
+  for (const item of Array.isArray(local) ? local : []) {
+    mapa.set(String(item.id_presupuesto), item);
+  }
+  return [...mapa.values()];
+}
+
+function presupuestoMasReciente(lista) {
+  return (Array.isArray(lista) ? lista : []).reduce((ultimo, actual) => {
+    if (!ultimo) return actual;
+    return new Date(actual.fecha_creacion || 0) >= new Date(ultimo.fecha_creacion || 0)
+      ? actual
+      : ultimo;
+  }, null);
+}
+
 export default function DetalleOrden() {
   const location = useLocation();
   const navigate = useNavigate();
@@ -79,19 +99,17 @@ export default function DetalleOrden() {
   const pendienteLocal = hoja?.pendiente;
   const enviado =
     hoja?.estado_envio_erp === 'ENVIADO' || hoja?.estado_envio_erp === 'SINCRONIZADO';
-  const presupuestoUltimo = presupuestos.reduce((ultimo, actual) => {
-    if (!ultimo) return actual;
-    return new Date(actual.fecha_creacion || 0) >= new Date(ultimo.fecha_creacion || 0)
-      ? actual
-      : ultimo;
-  }, null);
+  const presupuestoUltimo = presupuestoMasReciente(presupuestos);
   const presupuestoAprobado = presupuestoUltimo?.estado === 'APROBADO';
   const presupuestoPendiente =
     presupuestoUltimo?.estado === 'ENVIADO' || presupuestoUltimo?.estado === 'EN_COSTEO';
   const requiereAprobacion = presupuestoUltimo?.estado === 'RECHAZADO';
   const completado =
     hoja?.estado_servicio === 'FINALIZADO' &&
+    !presupuestoPendiente &&
     (enviado || presupuestoAprobado);
+  const enRevision =
+    hoja?.estado_servicio === 'FINALIZADO' && presupuestoPendiente && !completado;
 
   useEffect(() => {
     if (!orden) {
@@ -133,7 +151,7 @@ export default function DetalleOrden() {
         }
         const listaServidor = Array.isArray(datos.presupuestos) ? datos.presupuestos : [];
         const listaLocal = Array.isArray(local?.presupuestos) ? local.presupuestos : [];
-        setPresupuestos(listaServidor.length > 0 ? listaServidor : listaLocal);
+        setPresupuestos(unirPresupuestos(listaServidor, listaLocal));
         guardarHojaActual(actualizada);
         setActividades(datos.actividades || '');
         setObservaciones(datos.observaciones_tecnicas || '');
@@ -259,7 +277,10 @@ export default function DetalleOrden() {
       : Array.isArray(hoja.evidencias)
         ? hoja.evidencias
         : [];
-    const listaPresupuestos = presupuestos;
+    const listaPresupuestos = unirPresupuestos(
+      presupuestos,
+      Array.isArray(local.presupuestos) ? local.presupuestos : []
+    );
 
     const faltantes = [];
     if (!actividades.trim()) faltantes.push('actividades realizadas');
@@ -289,12 +310,7 @@ export default function DetalleOrden() {
     if (!evidencias.some((evidencia) => evidencia.tipo === 'firma')) {
       faltantes.push('la firma del cliente');
     }
-    const presupuestoRechazado = listaPresupuestos.reduce((ultimo, actual) => {
-      if (!ultimo) return actual;
-      return new Date(actual.fecha_creacion || 0) >= new Date(ultimo.fecha_creacion || 0)
-        ? actual
-        : ultimo;
-    }, null);
+    const presupuestoRechazado = presupuestoMasReciente(listaPresupuestos);
     if (presupuestoRechazado?.estado === 'RECHAZADO') {
       faltantes.push('crear un nuevo presupuesto o esperar la aprobación');
     }
@@ -350,7 +366,7 @@ export default function DetalleOrden() {
         pendiente: Boolean(datos.pendiente),
       });
       void actualizarOrdenEnCache(orden.id_asignacion, {
-        estado: 'FINALIZADO',
+        estado: presupuestoPendiente ? 'EN_REVISION' : 'FINALIZADO',
         estado_servicio: 'FINALIZADO',
         fecha_fin_servicio: finalizada.fecha_fin,
       });
@@ -427,7 +443,9 @@ export default function DetalleOrden() {
                   hoja
                     ? completado
                       ? 'COMPLETADO'
-                      : hoja.estado_servicio
+                      : enRevision
+                        ? 'EN_REVISION'
+                        : hoja.estado_servicio
                     : orden.estado
                 }
               />
@@ -468,7 +486,9 @@ export default function DetalleOrden() {
               {presupuestoAprobado
                 ? 'Presupuesto aprobado por la oficina. Servicio completado.'
                 : presupuestoPendiente
-                  ? 'Presupuesto pendiente. Puedes finalizar; la oficina lo revisará al sincronizar.'
+                  ? enRevision
+                    ? 'Servicio en revisión. Esperando la aprobación del presupuesto por la oficina.'
+                    : 'Presupuesto pendiente. Puedes finalizar; al reconectar quedará en revisión hasta que la oficina lo apruebe.'
                   : 'Presupuesto rechazado. Crea uno nuevo desde Presupuesto antes de finalizar.'}
             </p>
           )}
@@ -579,6 +599,12 @@ export default function DetalleOrden() {
           <Icono nombre="flecha-derecha" tamano={18} />
           Ir a resumen y envío
         </button>
+      )}
+
+      {enRevision && (
+        <p className="mensaje mensaje-alerta" role="status">
+          Servicio finalizado y en revisión. Se completará cuando la oficina apruebe el presupuesto.
+        </p>
       )}
 
       {completado && (

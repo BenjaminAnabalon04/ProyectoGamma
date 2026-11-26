@@ -308,6 +308,74 @@ async function obtenerPresupuesto(req, res) {
   }
 }
 
+async function guardarCosteo(req, res) {
+  if (!esUuid(req.params.id_presupuesto)) {
+    return res.status(400).json({ mensaje: 'id_presupuesto no es válido' });
+  }
+
+  const precios = Array.isArray(req.body?.precios) ? req.body.precios : [];
+  const observacion = texto(req.body?.observacion_oficina, 2000);
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+
+    const presupuesto = await client.query(
+      `SELECT id_presupuesto, id_hoja, estado
+         FROM presupuesto
+        WHERE id_presupuesto = $1
+        FOR UPDATE`,
+      [req.params.id_presupuesto]
+    );
+    if (presupuesto.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ mensaje: 'Presupuesto no encontrado' });
+    }
+    if (!['ENVIADO', 'EN_COSTEO'].includes(presupuesto.rows[0].estado)) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ mensaje: 'Ese presupuesto ya fue resuelto' });
+    }
+
+    for (const precio of precios) {
+      if (!esUuid(precio?.id_detalle)) continue;
+      const unitario = numeroPositivo(precio?.precio_unitario);
+      if (!unitario) continue;
+      await client.query(
+        `UPDATE detalle_presupuesto
+            SET precio_unitario = $2
+          WHERE id_detalle = $1 AND id_presupuesto = $3`,
+        [precio.id_detalle, unitario, req.params.id_presupuesto]
+      );
+    }
+
+    const total = await client.query(
+      `SELECT COALESCE(SUM(cantidad * COALESCE(precio_unitario, 0)), 0) AS total
+         FROM detalle_presupuesto
+        WHERE id_presupuesto = $1`,
+      [req.params.id_presupuesto]
+    );
+
+    const actualizado = await client.query(
+      `UPDATE presupuesto
+          SET estado = 'EN_COSTEO',
+              monto_estimado = $2,
+              observacion_oficina = COALESCE($3, observacion_oficina)
+        WHERE id_presupuesto = $1
+        RETURNING id_presupuesto, estado, monto_estimado`,
+      [req.params.id_presupuesto, Number(total.rows[0].total), observacion]
+    );
+
+    await client.query('COMMIT');
+    return res.json(actualizado.rows[0]);
+  } catch (error) {
+    await client.query('ROLLBACK');
+    console.error('Error al guardar costeo:', error.message);
+    return res.status(500).json({ mensaje: 'No se pudo guardar el costeo' });
+  } finally {
+    client.release();
+  }
+}
+
 async function resolverPresupuesto(req, res, aprobado) {
   if (!esUuid(req.params.id_presupuesto)) {
     return res.status(400).json({ mensaje: 'id_presupuesto no es válido' });
@@ -336,7 +404,7 @@ async function resolverPresupuesto(req, res, aprobado) {
       await client.query('ROLLBACK');
       return res.status(404).json({ mensaje: 'Presupuesto no encontrado' });
     }
-    if (presupuesto.rows[0].estado !== 'ENVIADO') {
+    if (!['ENVIADO', 'EN_COSTEO'].includes(presupuesto.rows[0].estado)) {
       await client.query('ROLLBACK');
       return res.status(409).json({ mensaje: 'Ese presupuesto ya fue resuelto' });
     }
@@ -414,4 +482,11 @@ function rechazar(req, res) {
   return resolverPresupuesto(req, res, false);
 }
 
-module.exports = { listarPresupuestos, crearPresupuesto, obtenerPresupuesto, aprobar, rechazar };
+module.exports = {
+  listarPresupuestos,
+  crearPresupuesto,
+  obtenerPresupuesto,
+  guardarCosteo,
+  aprobar,
+  rechazar,
+};

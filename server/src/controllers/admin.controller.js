@@ -11,7 +11,7 @@ async function resumen(req, res) {
          (SELECT COUNT(*)::int FROM hoja_servicio WHERE estado_servicio = 'EN_EJECUCION') AS servicios_en_curso,
          (SELECT COUNT(*)::int FROM hoja_servicio WHERE estado_servicio = 'FINALIZADO') AS servicios_finalizados,
          (SELECT COUNT(*)::int FROM hoja_servicio WHERE estado_envio_erp = 'ERROR') AS envios_con_error,
-         (SELECT COUNT(*)::int FROM presupuesto WHERE estado = 'ENVIADO') AS presupuestos_pendientes,
+         (SELECT COUNT(*)::int FROM presupuesto WHERE estado IN ('ENVIADO', 'EN_COSTEO')) AS presupuestos_pendientes,
          (SELECT COUNT(*)::int FROM usuario WHERE activo = TRUE) AS usuarios_activos`
     );
     return res.json(resultado.rows[0]);

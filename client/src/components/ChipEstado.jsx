@@ -3,6 +3,8 @@
 const ESTADOS = {
   PENDIENTE: { texto: 'Pendiente', clase: 'pildora pildora-pendiente' },
   EN_EJECUCION: { texto: 'En proceso', clase: 'pildora pildora-proceso' },
+  EN_COSTEO: { texto: 'En costeo', clase: 'pildora pildora-proceso' },
+  EN_REVISION: { texto: 'En revisión', clase: 'pildora pildora-proceso' },
   FINALIZADA: { texto: 'Finalizada', clase: 'pildora pildora-ok' },
   FINALIZADO: { texto: 'Finalizado', clase: 'pildora pildora-ok' },
   COMPLETADO: { texto: 'Completado', clase: 'pildora pildora-ok' },

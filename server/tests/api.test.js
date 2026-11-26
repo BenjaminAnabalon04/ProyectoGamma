@@ -151,6 +151,42 @@ test('HU-08: un presupuesto aprobado con el servicio finalizado marca la orden c
   assert.equal(res.datos[0].presupuesto_estado, 'APROBADO');
 });
 
+test('HU-08: un presupuesto pendiente deja el servicio en revisión al finalizar', async () => {
+  const db = dbConConsultas([
+    {
+      contiene: 'FROM asignacion a',
+      rows: [
+        {
+          id_orden: '3',
+          id_asignacion: '7',
+          codigo_orden_erp: 'OT-8844',
+          titulo: 'Revisión',
+          descripcion: 'Revisión general',
+          tipo_servicio: 'Mantención',
+          prioridad: 'ALTA',
+          fecha_programada: null,
+          estado: 'PENDIENTE',
+          estado_servicio: 'FINALIZADO',
+          estado_envio_erp: 'PENDIENTE',
+          presupuesto_estado: 'ENVIADO',
+          cliente: 'Cliente de prueba',
+          equipo: 'Equipo de prueba',
+          codigo_qr_equipo: 'QR-EQ-001',
+        },
+      ],
+    },
+  ]);
+  const { misTrabajos } = cargar('src/controllers/ordenes.controller.js', db);
+  const res = responder();
+
+  await misTrabajos({ usuario: TOKEN }, res);
+  await res.terminado;
+
+  assert.equal(res.codigo, 200);
+  assert.equal(res.datos[0].estado, 'EN_REVISION');
+  assert.equal(res.datos[0].presupuesto_estado, 'ENVIADO');
+});
+
 test('HU-03: iniciar servicio crea la hoja con el UUID del celular', async () => {
   const db = dbConConsultas([
     {

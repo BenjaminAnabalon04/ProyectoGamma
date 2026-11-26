@@ -50,7 +50,7 @@ I-xx) corresponden a los Informes 1 y 2. El detalle de las decisiones está en
 - [x] **F1-2. HU-01.** `Login.jsx` con RUT, contraseña y mensaje de error. Pruebas F-01, F-02.
 - [x] **F1-3. HU-02.** `MisTrabajos.jsx` con sus órdenes y paso al detalle. Prueba F-03.
 - [x] **F1-4. HU-03.** `DetalleOrden.jsx` con `crypto.randomUUID()` al iniciar la hoja e inicio/fin. Pruebas F-04, F-05.
-- [x] **F1-5. HU-09.** Botones grandes, alto contraste y uso con una mano (`index.css`). Prueba F-14.
+- [x] **F1-5. HU-09.** Botones de 56 px, alto contraste ≥ 7:1 y uso con una mano (`index.css`). Medición automática en `scripts/verificar-usabilidad.js`. Prueba F-14.
 - [x] **F1-6. HU-10.** `EscanerQR.jsx` con `BarcodeDetector` e ingreso manual de respaldo.
 - [x] **F1-7.** PWA: `manifest.webmanifest`, `sw.js`, iconos y service worker registrado en producción.
 - [x] **F1-8.** `Estado.jsx` comprueba servidor, base de datos y ERP.

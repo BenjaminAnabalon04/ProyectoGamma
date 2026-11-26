@@ -7,6 +7,7 @@
     "dev:server": "npm --prefix server run dev",
     "dev:erp": "npm --prefix erp-mock run dev",
     "verificar:comentarios": "node scripts/verificar-comentarios.js",
-    "verificar": "npm run verificar:comentarios && npm --prefix server run verificar && npm --prefix server test && npm --prefix erp-mock test && npm --prefix client run lint && npm --prefix client run build"
+    "verificar:usabilidad": "node scripts/verificar-usabilidad.js",
+    "verificar": "npm run verificar:comentarios && npm run verificar:usabilidad && npm --prefix server run verificar && npm --prefix server test && npm --prefix erp-mock test && npm --prefix client run lint && npm --prefix client run build"
   }
 }

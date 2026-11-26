@@ -57,6 +57,11 @@ function convertir(fila) {
   if (fila.estado_servicio === 'EN_EJECUCION') {
     estado = 'EN_EJECUCION';
   } else if (
+    fila.estado_servicio === 'FINALIZADO' &&
+    (fila.presupuesto_estado === 'ENVIADO' || fila.presupuesto_estado === 'EN_COSTEO')
+  ) {
+    estado = 'EN_REVISION';
+  } else if (
     fila.estado_envio_erp === 'ENVIADO' ||
     fila.estado_envio_erp === 'SINCRONIZADO' ||
     (fila.estado_servicio === 'FINALIZADO' && fila.presupuesto_estado === 'APROBADO')

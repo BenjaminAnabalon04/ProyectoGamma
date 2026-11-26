@@ -225,12 +225,13 @@ export default function Resumen() {
       guardarHojaActual({ ...actualizada, pendiente: false });
       const ordenActual = leerLocal('orden_actual');
       if (ordenActual) {
+        const estadoOrden = presupuestoPendiente ? 'EN_REVISION' : 'COMPLETADO';
         localStorage.setItem(
           'orden_actual',
-          JSON.stringify({ ...ordenActual, estado: 'COMPLETADO', estado_envio_erp: 'ENVIADO' })
+          JSON.stringify({ ...ordenActual, estado: estadoOrden, estado_envio_erp: 'ENVIADO' })
         );
         void actualizarOrdenEnCache(ordenActual.id_asignacion, {
-          estado: 'COMPLETADO',
+          estado: estadoOrden,
           estado_envio_erp: 'ENVIADO',
         });
       }
@@ -253,9 +254,14 @@ export default function Resumen() {
       : ultimo;
   }, null);
   const presupuestoAprobado = presupuestoUltimo?.estado === 'APROBADO';
+  const presupuestoPendiente =
+    presupuestoUltimo?.estado === 'ENVIADO' || presupuestoUltimo?.estado === 'EN_COSTEO';
   const completado =
     detalle?.estado_servicio === 'FINALIZADO' &&
+    !presupuestoPendiente &&
     (enviado || presupuestoAprobado);
+  const enRevision =
+    detalle?.estado_servicio === 'FINALIZADO' && presupuestoPendiente && !completado;
   const puedeEnviar = detalle?.estado_servicio === 'FINALIZADO' && !completado;
 
   const codigo = detalle?.orden?.codigo_orden_erp || hoja?.codigo_hoja_erp || '';
@@ -340,6 +346,11 @@ export default function Resumen() {
           {hoja?.pendiente && (
             <p className="mensaje mensaje-alerta">Hay datos pendientes de sincronización.</p>
           )}
+          {enRevision && (
+            <p className="mensaje mensaje-alerta" role="status">
+              Servicio en revisión. Se completará cuando la oficina apruebe el presupuesto.
+            </p>
+          )}
 
           {detalle && (
             <>
@@ -366,6 +377,12 @@ export default function Resumen() {
                   <span>Envío al ERP</span>
                   <ChipEstado estado={detalle.estado_envio_erp} />
                 </div>
+                {enRevision && (
+                  <div className="fila">
+                    <span>Estado del servicio</span>
+                    <ChipEstado estado="EN_REVISION" />
+                  </div>
+                )}
               </div>
 
               <div className={enLinea ? 'sync' : 'sync sin-red'} style={{ marginTop: '14px' }}>

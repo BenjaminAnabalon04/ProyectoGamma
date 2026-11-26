@@ -5,16 +5,17 @@
   --azul-hero: #123c90;
   --azul-noche: #0d1b2a;
   --ambar: #fb9b08;
-  --ambar-oscuro: #d98200;
-  --verde: #019565;
+  --ambar-oscuro: #ffb43a;
+  --verde: #005c3f;
   --verde-claro: #d8f3e9;
+  --verde-texto: #004d34;
   --fondo: #eff2f9;
   --superficie: #ffffff;
   --texto: #1b2b3c;
-  --texto-tenue: #64748b;
+  --texto-tenue: #3f4c5c;
   --borde: #e1e7ef;
   --borde-fuerte: #cfdae7;
-  --error: #b42318;
+  --error: #8f1a12;
   --sombra: 0 10px 30px rgba(18, 60, 144, 0.08);
   font-family: 'Segoe UI', system-ui, -apple-system, Arial, sans-serif;
 }
@@ -62,6 +63,12 @@ select,
 textarea {
   font: inherit;
   color: inherit;
+  touch-action: manipulation;
+}
+
+a,
+summary {
+  touch-action: manipulation;
 }
 
 :focus-visible {
@@ -146,7 +153,7 @@ textarea {
 
 .pildora-red.sin-red {
   background: var(--ambar);
-  color: #3c2600;
+  color: #2c1c00;
 }
 
 .boton-barra {
@@ -154,8 +161,8 @@ textarea {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 40px;
-  padding: 0 12px;
+  min-height: 56px;
+  padding: 0 14px;
   border-radius: 12px;
   border: 1px solid rgba(255, 255, 255, 0.35);
   background: rgba(255, 255, 255, 0.08);
@@ -203,7 +210,7 @@ textarea {
 .navegacion-superior a {
   padding: 7px 12px;
   border-radius: 999px;
-  color: #dce8f7;
+  color: #f1f6fd;
   font-size: 13px;
   font-weight: 600;
   text-decoration: none;
@@ -232,11 +239,13 @@ textarea {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 3px;
+  min-height: 60px;
   padding: 6px 2px;
   border-radius: 12px;
   color: var(--texto-tenue);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.02em;
   text-decoration: none;
@@ -306,7 +315,7 @@ textarea {
 }
 
 .tarjeta-hero .micro {
-  color: #f3c46b;
+  color: #ffe1ad;
 }
 
 .tarjeta-hero h1,
@@ -405,7 +414,7 @@ textarea {
 }
 
 .boton-verde:hover {
-  background: #017a53;
+  background: #004d34;
 }
 
 .boton-claro {
@@ -439,10 +448,10 @@ textarea {
 
 .boton-compacto {
   width: auto;
-  min-height: 44px;
+  min-height: 56px;
   margin-top: 0;
-  padding: 0 16px;
-  font-size: 14px;
+  padding: 0 18px;
+  font-size: 15px;
   border-radius: 12px;
 }
 
@@ -450,8 +459,8 @@ textarea {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
+  width: 56px;
+  height: 56px;
   padding: 0;
   border: 1px solid var(--borde-fuerte);
   border-radius: 12px;
@@ -483,9 +492,13 @@ textarea {
 }
 
 .enlace-boton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  padding: 0 10px;
   border: 0;
   background: transparent;
-  padding: 0;
   color: inherit;
   font: inherit;
   font-weight: 700;
@@ -514,7 +527,7 @@ input[type='file'],
 select,
 textarea {
   width: 100%;
-  min-height: 52px;
+  min-height: 56px;
   padding: 12px 14px;
   border: 1px solid var(--borde-fuerte);
   border-radius: 14px;
@@ -578,13 +591,13 @@ textarea:focus {
 .chip-ok,
 .pildora-ok {
   background: var(--verde-claro);
-  color: #026b4b;
+  color: var(--verde-texto);
 }
 
 .chip-alerta,
 .pildora-proceso {
   background: #fff0d4;
-  color: #8a5300;
+  color: #6b3f00;
 }
 
 .chip-error,
@@ -595,7 +608,7 @@ textarea:focus {
 
 .pildora-pendiente {
   background: #e9eef5;
-  color: #475569;
+  color: var(--texto-tenue);
 }
 
 .mensaje {
@@ -610,7 +623,7 @@ textarea:focus {
 .mensaje-ok {
   background: #e6f7ef;
   border-color: #b6e6d2;
-  color: #026b4b;
+  color: var(--verde-texto);
   font-weight: 600;
 }
 
@@ -624,12 +637,12 @@ textarea:focus {
 .mensaje-alerta {
   background: #fff7e6;
   border-color: #f6dfb3;
-  color: #8a5300;
+  color: #6b3f00;
   font-weight: 600;
 }
 
 .ok {
-  color: var(--verde);
+  color: var(--verde-texto);
   font-weight: 700;
 }
 
@@ -639,7 +652,7 @@ textarea:focus {
 }
 
 .alerta {
-  color: #8a5300;
+  color: #6b3f00;
   font-weight: 700;
 }
 
@@ -681,7 +694,7 @@ textarea:focus {
 
 .login-hero p {
   margin: 0;
-  color: #c6d5ec;
+  color: #dbe7fb;
   font-size: 14px;
 }
 
@@ -714,7 +727,7 @@ textarea:focus {
 }
 
 .perfil .micro {
-  color: #f3c46b;
+  color: #ffe1ad;
   margin-bottom: 2px;
 }
 
@@ -729,7 +742,7 @@ textarea:focus {
   align-items: center;
   gap: 5px;
   font-size: 13px;
-  color: #c6d5ec;
+  color: #dbe7fb;
   margin-top: 4px;
 }
 
@@ -771,11 +784,11 @@ textarea:focus {
 .kpi span {
   display: block;
   margin-top: 6px;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #475569;
+  color: var(--texto-tenue);
 }
 
 .kpi-azul {
@@ -787,13 +800,13 @@ textarea:focus {
 .kpi-ambar {
   background: #fff7e3;
   border-color: #ffe6b3;
-  color: #b26a00;
+  color: #6b3f00;
 }
 
 .kpi-verde {
   background: #e4f8f1;
   border-color: #bfeedd;
-  color: var(--verde);
+  color: var(--verde-texto);
 }
 
 .lista-ordenes {
@@ -871,10 +884,13 @@ textarea:focus {
 .orden-pie button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
-  padding: 0;
+  min-height: 56px;
+  padding: 0 14px;
   border: 0;
-  background: transparent;
+  border-radius: 12px;
+  background: #eef4fb;
   color: var(--azul-barra);
   font-size: 14px;
   font-weight: 700;
@@ -887,7 +903,7 @@ textarea:focus {
 .ficha-hero-serie {
   margin-top: 6px;
   font-size: 13px;
-  color: #c6d5ec;
+  color: #dbe7fb;
 }
 
 .grilla-datos {
@@ -962,13 +978,13 @@ textarea:focus {
 }
 
 .chequeo select {
-  min-height: 46px;
+  min-height: 56px;
   padding: 9px 12px;
   font-size: 15px;
 }
 
 .chequeo input[type='text'] {
-  min-height: 44px;
+  min-height: 56px;
   padding: 9px 12px;
   font-size: 14px;
   margin-top: 8px;
@@ -976,14 +992,14 @@ textarea:focus {
 
 .fila-material {
   display: grid;
-  grid-template-columns: 1fr 88px 52px;
+  grid-template-columns: 1fr 88px 56px;
   gap: 8px;
   align-items: end;
 }
 
 .fila-material .boton {
-  width: 52px;
-  min-height: 52px;
+  width: 56px;
+  min-height: 56px;
   margin-top: 0;
   padding: 0;
   border-radius: 12px;
@@ -1178,7 +1194,7 @@ textarea:focus {
 .sync p {
   margin: 2px 0 0;
   font-size: 13px;
-  color: #475569;
+  color: var(--texto-tenue);
 }
 
 .sync.sin-red {
@@ -1188,7 +1204,7 @@ textarea:focus {
 
 .sync.sin-red .sync-icono {
   background: var(--ambar);
-  color: #3c2600;
+  color: #2c1c00;
 }
 
 .exito {
@@ -1204,7 +1220,7 @@ textarea:focus {
   height: 96px;
   border-radius: 50%;
   background: var(--verde-claro);
-  color: var(--verde);
+  color: var(--verde-texto);
   margin: 12px 0 18px;
 }
 
@@ -1289,7 +1305,7 @@ textarea:focus {
 }
 
 .escaner-codigo input::placeholder {
-  color: #8fa1b8;
+  color: #c6d5ec;
 }
 
 .escaner-codigo .etiqueta {
@@ -1323,7 +1339,7 @@ textarea:focus {
 }
 
 .admin-hero .micro {
-  color: #f3c46b;
+  color: #ffe1ad;
 }
 
 .admin-rol {
@@ -1374,11 +1390,11 @@ textarea:focus {
 }
 
 .kpi-admin.kpi-ambar strong {
-  color: #b26a00;
+  color: #6b3f00;
 }
 
 .kpi-admin.kpi-verde strong {
-  color: var(--verde);
+  color: var(--verde-texto);
 }
 
 .kpi-admin.kpi-error strong {
@@ -1414,7 +1430,7 @@ textarea:focus {
 }
 
 .presupuesto-card .monto {
-  color: #b26a00;
+  color: #6b3f00;
   font-weight: 800;
   white-space: nowrap;
 }
@@ -1479,7 +1495,7 @@ textarea:focus {
 .lista-pantallas a {
   color: var(--azul-barra);
   font-weight: 700;
-  min-height: 32px;
+  min-height: 56px;
 }
 
 .miniatura {
@@ -1531,6 +1547,7 @@ textarea:focus {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-height: 56px;
   padding: 12px 0;
   font-size: 15px;
   font-weight: 700;

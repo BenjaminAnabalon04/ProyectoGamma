@@ -122,6 +122,8 @@ CREATE TABLE hoja_servicio (
     fecha_envio_erp        TIMESTAMPTZ,
     id_dispositivo         VARCHAR(60),
     version                INTEGER     NOT NULL DEFAULT 1,
+    intentos_envio         INTEGER     NOT NULL DEFAULT 0,
+    proximo_intento_envio  TIMESTAMPTZ,
     CHECK (fecha_fin IS NULL OR fecha_inicio IS NULL OR fecha_fin >= fecha_inicio)
 );
 
