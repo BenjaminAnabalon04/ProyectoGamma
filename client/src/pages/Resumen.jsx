@@ -2,7 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { cerrarSesion, obtenerToken, pedir } from '../api/api';
+import {
+  actualizarOrdenEnCache,
+  cerrarSesion,
+  guardarHojaActual,
+  obtenerToken,
+  pedir,
+} from '../api/api';
+import { guardarBorrador, leerBorrador } from '../api/borrador';
 import ChipEstado from '../components/ChipEstado';
 import Icono from '../components/Icono';
 import ImagenEvidencia from '../components/ImagenEvidencia';
@@ -37,6 +44,46 @@ function etiquetaResultado(valor) {
   return RESULTADOS[valor] || 'Sin registrar';
 }
 
+function unirPorClave(servidor, local, clave) {
+  const mapa = new Map();
+  for (const item of Array.isArray(servidor) ? servidor : []) {
+    mapa.set(String(item[clave]), item);
+  }
+  for (const item of Array.isArray(local) ? local : []) {
+    mapa.set(String(item[clave]), item);
+  }
+  return [...mapa.values()];
+}
+
+function combinarDetalle(datos, hoja, local, ordenLocal) {
+  const borrador = local || {};
+  const base = datos || {};
+  return {
+    ...hoja,
+    ...base,
+    ...borrador,
+    id_hoja: hoja?.id_hoja,
+    estado_servicio:
+      borrador.estado_servicio || base.estado_servicio || hoja?.estado_servicio,
+    estado_envio_erp:
+      base.estado_envio_erp === 'ENVIADO' || base.estado_envio_erp === 'SINCRONIZADO'
+        ? base.estado_envio_erp
+        : borrador.estado_envio_erp || base.estado_envio_erp || hoja?.estado_envio_erp,
+    fecha_inicio: borrador.fecha_inicio || base.fecha_inicio || hoja?.fecha_inicio,
+    fecha_fin: borrador.fecha_fin || base.fecha_fin || hoja?.fecha_fin,
+    horometro_servicio:
+      borrador.horometro_servicio ?? base.horometro_servicio ?? hoja?.horometro_servicio,
+    actividades: borrador.actividades || base.actividades,
+    observaciones_tecnicas: borrador.observaciones_tecnicas || base.observaciones_tecnicas,
+    resultado: borrador.resultado || base.resultado,
+    orden: base.orden || borrador.orden || ordenLocal || hoja?.orden,
+    respuestas: unirPorClave(base.respuestas, borrador.respuestas, 'id_item'),
+    consumos: unirPorClave(base.consumos, borrador.consumos, 'id_consumo'),
+    evidencias: unirPorClave(base.evidencias, borrador.evidencias, 'id_evidencia'),
+    presupuestos: unirPorClave(borrador.presupuestos, base.presupuestos, 'id_presupuesto'),
+  };
+}
+
 function horometroTexto(detalle) {
   const valor = detalle?.horometro_servicio ?? detalle?.orden?.horometro_actual;
   if (valor === null || valor === undefined || valor === '') return 'Sin registrar';
@@ -52,6 +99,7 @@ export default function Resumen() {
   const [detalle, setDetalle] = useState(null);
   const [cargando, setCargando] = useState(Boolean(hoja?.id_hoja));
   const [enviando, setEnviando] = useState(false);
+  const [falloEnvio, setFalloEnvio] = useState(false);
   const [mensaje, setMensaje] = useState('');
   const [error, setError] = useState('');
   const [enLinea, setEnLinea] = useState(navigator.onLine);
@@ -75,26 +123,22 @@ export default function Resumen() {
     if (!hoja?.id_hoja) return undefined;
 
     let activo = true;
+    const local = leerBorrador(hoja.id_hoja);
+    const ordenLocal = leerLocal('orden_actual');
     pedir(`/servicios/${hoja.id_hoja}`, { token })
       .then((datos) => {
         if (!activo) return;
-        const local = hoja || {};
-        setDetalle({
-          ...datos,
-          estado_servicio:
-            local.estado_servicio === 'FINALIZADO' ? 'FINALIZADO' : datos.estado_servicio,
-          estado_envio_erp: datos.estado_envio_erp || local.estado_envio_erp,
-          fecha_inicio: datos.fecha_inicio || local.fecha_inicio,
-          fecha_fin: datos.fecha_fin || local.fecha_fin,
-          horometro_servicio: datos.horometro_servicio ?? local.horometro_servicio,
-          resultado: datos.resultado || local.resultado,
-        });
+        setDetalle(combinarDetalle(datos, hoja, local, ordenLocal));
       })
       .catch((err) => {
         if (!activo) return;
         if (err.estado === 401 || err.estado === 403) {
           cerrarSesion();
           navigate('/login', { replace: true });
+          return;
+        }
+        if (err.estado === 0) {
+          setDetalle(combinarDetalle(null, hoja, local, ordenLocal));
           return;
         }
         setError(err.message || 'No se pudo cargar el resumen del servicio.');
@@ -108,11 +152,43 @@ export default function Resumen() {
     };
   }, [token, hoja, hoja?.id_hoja, navigate]);
 
+  useEffect(() => {
+    const actualizar = () => {
+      const localHoja = leerLocal('hoja_actual');
+      if (!localHoja?.id_hoja) return;
+      const borrador = leerBorrador(localHoja.id_hoja);
+      setDetalle((previo) =>
+        combinarDetalle(previo, localHoja, borrador, leerLocal('orden_actual'))
+      );
+    };
+    window.addEventListener('gamma:hoja', actualizar);
+    return () => window.removeEventListener('gamma:hoja', actualizar);
+  }, []);
+
   async function enviarAlErp() {
     if (!hoja?.id_hoja) return;
     setEnviando(true);
+    setFalloEnvio(false);
     setMensaje('');
     setError('');
+
+    if (detalle?.estado_servicio !== 'FINALIZADO') {
+      setError('Finaliza el servicio antes de enviarlo al ERP.');
+      setEnviando(false);
+      return;
+    }
+
+    const evidencias = Array.isArray(detalle?.evidencias) ? detalle.evidencias : [];
+    if (!evidencias.some((evidencia) => evidencia.tipo === 'foto')) {
+      setError('Falta al menos una fotografía antes de enviar.');
+      setEnviando(false);
+      return;
+    }
+    if (!evidencias.some((evidencia) => evidencia.tipo === 'firma')) {
+      setError('Falta la firma del cliente antes de enviar.');
+      setEnviando(false);
+      return;
+    }
 
     try {
       const respuesta = await pedir(`/servicios/${hoja.id_hoja}/enviar`, {
@@ -121,25 +197,48 @@ export default function Resumen() {
       });
 
       if (respuesta.pendiente) {
+        guardarBorrador(hoja.id_hoja, {
+          estado_envio_erp: 'PENDIENTE',
+          pendiente: true,
+        });
+        setDetalle((previo) =>
+          previo ? { ...previo, estado_envio_erp: 'PENDIENTE' } : previo
+        );
         setMensaje('Envío guardado en el equipo. Se realizará al reconectar con el servidor.');
         return;
       }
 
       setMensaje(`Hoja enviada al ERP con código ${respuesta.codigo_hoja_erp}.`);
       const actualizada = await pedir(`/servicios/${hoja.id_hoja}`, { token });
-      setDetalle(actualizada);
-      localStorage.setItem(
-        'hoja_actual',
-        JSON.stringify({ ...actualizada, pendiente: false })
+      guardarBorrador(hoja.id_hoja, {
+        estado_envio_erp: actualizada.estado_envio_erp || 'ENVIADO',
+        pendiente: false,
+      });
+      setDetalle(
+        combinarDetalle(
+          actualizada,
+          hoja,
+          leerBorrador(hoja.id_hoja),
+          leerLocal('orden_actual')
+        )
       );
+      guardarHojaActual({ ...actualizada, pendiente: false });
       const ordenActual = leerLocal('orden_actual');
       if (ordenActual) {
         localStorage.setItem(
           'orden_actual',
           JSON.stringify({ ...ordenActual, estado: 'COMPLETADO', estado_envio_erp: 'ENVIADO' })
         );
+        void actualizarOrdenEnCache(ordenActual.id_asignacion, {
+          estado: 'COMPLETADO',
+          estado_envio_erp: 'ENVIADO',
+        });
       }
     } catch (err) {
+      setFalloEnvio(true);
+      setDetalle((previo) =>
+        previo ? { ...previo, estado_envio_erp: 'ERROR' } : previo
+      );
       setError(err.message || 'No se pudo enviar la hoja al ERP. Puedes reintentar.');
     } finally {
       setEnviando(false);
@@ -147,7 +246,17 @@ export default function Resumen() {
   }
 
   const enviado = detalle?.estado_envio_erp === 'ENVIADO' || detalle?.estado_envio_erp === 'SINCRONIZADO';
-  const puedeEnviar = detalle?.estado_servicio === 'FINALIZADO' && !enviado;
+  const presupuestoUltimo = (detalle?.presupuestos || []).reduce((ultimo, actual) => {
+    if (!ultimo) return actual;
+    return new Date(actual.fecha_creacion || 0) >= new Date(ultimo.fecha_creacion || 0)
+      ? actual
+      : ultimo;
+  }, null);
+  const presupuestoAprobado = presupuestoUltimo?.estado === 'APROBADO';
+  const completado =
+    detalle?.estado_servicio === 'FINALIZADO' &&
+    (enviado || presupuestoAprobado);
+  const puedeEnviar = detalle?.estado_servicio === 'FINALIZADO' && !completado;
 
   const codigo = detalle?.orden?.codigo_orden_erp || hoja?.codigo_hoja_erp || '';
   const respuestas = detalle?.respuestas || [];
@@ -168,7 +277,7 @@ export default function Resumen() {
     );
   }
 
-  if (enviado) {
+  if (completado) {
     return (
       <main className="pantalla">
         <section className="tarjeta exito">
@@ -193,7 +302,7 @@ export default function Resumen() {
             </div>
             <div className="fila">
               <span>Estado del envío</span>
-              <ChipEstado estado={detalle?.estado_envio_erp} />
+              <ChipEstado estado={enviado ? detalle?.estado_envio_erp : 'COMPLETADO'} />
             </div>
           </div>
 
@@ -268,7 +377,7 @@ export default function Resumen() {
                   <p>
                     {enLinea
                       ? 'Conexión activa. Los datos se enviarán directamente a la API REST.'
-                      : 'Sin conexión. El paquete se guardará en IndexedDB y se enviará al reconectar.'}
+                      : 'Sin conexión. El servicio se enviará al reconectar.'}
                   </p>
                 </div>
               </div>
@@ -293,7 +402,11 @@ export default function Resumen() {
           disabled={enviando}
         >
           <Icono nombre="nube-subir" tamano={20} />
-          {enviando ? 'Enviando...' : 'Finalizar y Enviar a Servidor'}
+          {enviando
+            ? 'Enviando...'
+            : falloEnvio || detalle?.estado_envio_erp === 'ERROR'
+              ? 'Reintentar envío'
+              : 'Finalizar y Enviar a Servidor'}
         </button>
       )}
 

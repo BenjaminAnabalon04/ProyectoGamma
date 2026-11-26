@@ -1,12 +1,15 @@
 // Desarrollado por: Robert Ramírez
 
 const NOMBRE_BD = 'gamma-offline';
+const PREFIJO_ARCHIVO = 'archivo:';
 let promesaBd = null;
 
 function abrirBd() {
   if (promesaBd) return promesaBd;
+
   promesaBd = new Promise((resolve, reject) => {
-    const solicitud = indexedDB.open(NOMBRE_BD, 1);
+    const solicitud = indexedDB.open(NOMBRE_BD);
+
     solicitud.onupgradeneeded = () => {
       const bd = solicitud.result;
       if (!bd.objectStoreNames.contains('cache')) {
@@ -16,12 +19,18 @@ function abrirBd() {
         bd.createObjectStore('cola', { keyPath: 'id' });
       }
     };
+
     solicitud.onsuccess = () => resolve(solicitud.result);
     solicitud.onerror = () => {
       promesaBd = null;
       reject(solicitud.error);
     };
+    solicitud.onblocked = () => {
+      promesaBd = null;
+      reject(new Error('La base local está bloqueada por otra pestaña.'));
+    };
   });
+
   return promesaBd;
 }
 
@@ -43,13 +52,21 @@ export function notificarCola() {
   }
 }
 
+export function notificarEvento(nombre) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(nombre));
+  }
+}
+
 export async function leerCache(clave) {
   const fila = await operar('cache', 'readonly', (almacen) => almacen.get(clave));
   return fila ? fila.datos : null;
 }
 
 export async function guardarCache(clave, datos) {
-  await operar('cache', 'readwrite', (almacen) => almacen.put({ clave, datos }));
+  await operar('cache', 'readwrite', (almacen) =>
+    almacen.put({ clave, datos, actualizado: new Date().toISOString() })
+  );
 }
 
 export async function limpiarCache() {
@@ -74,4 +91,40 @@ export async function actualizarCola(item) {
 export async function borrarCola(id) {
   await operar('cola', 'readwrite', (almacen) => almacen.delete(id));
   notificarCola();
+}
+
+export async function limpiarCola() {
+  await operar('cola', 'readwrite', (almacen) => almacen.clear());
+  notificarCola();
+}
+
+export async function guardarArchivo(id, contenido) {
+  await operar('cache', 'readwrite', (almacen) =>
+    almacen.put({
+      clave: `${PREFIJO_ARCHIVO}${id}`,
+      datos: contenido,
+      actualizado: new Date().toISOString(),
+    })
+  );
+}
+
+export async function leerArchivo(id) {
+  const fila = await operar('cache', 'readonly', (almacen) =>
+    almacen.get(`${PREFIJO_ARCHIVO}${id}`)
+  );
+  return fila ? fila.datos : null;
+}
+
+export async function limpiarArchivos() {
+  await operar('cache', 'readwrite', (almacen) => {
+    const solicitud = almacen.getAllKeys();
+    solicitud.onsuccess = () => {
+      for (const clave of solicitud.result) {
+        if (String(clave).startsWith(PREFIJO_ARCHIVO)) {
+          almacen.delete(clave);
+        }
+      }
+    };
+    return solicitud;
+  });
 }

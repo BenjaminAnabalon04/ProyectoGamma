@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cerrarSesion, obtenerToken, pedir } from '../api/api';
+import { guardarBorrador, leerBorrador } from '../api/borrador';
 import ImagenEvidencia from '../components/ImagenEvidencia';
 import Icono from '../components/Icono';
 import TarjetaCabecera from '../components/TarjetaCabecera';
@@ -79,6 +80,7 @@ export default function EvidenciasFirma() {
   const [orden] = useState(() => leerLocal('orden_actual'));
   const [hoja] = useState(() => leerLocal('hoja_actual'));
   const [evidencias, setEvidencias] = useState([]);
+  const [resumenServicio, setResumenServicio] = useState(null);
   const [nombreFirmante, setNombreFirmante] = useState('');
   const [rutFirmante, setRutFirmante] = useState('');
   const [coordenadas, setCoordenadas] = useState(null);
@@ -97,18 +99,33 @@ export default function EvidenciasFirma() {
     if (!hoja?.id_hoja) return undefined;
 
     let activo = true;
-    pedir(`/evidencias/${hoja.id_hoja}`, { token })
-      .then((datos) => {
-        if (activo) setEvidencias(Array.isArray(datos) ? datos : []);
-      })
-      .catch((err) => {
+    Promise.allSettled([
+      pedir(`/evidencias/${hoja.id_hoja}`, { token }),
+      pedir(`/servicios/${hoja.id_hoja}`, { token }),
+    ])
+      .then(([resEvidencias, resServicio]) => {
         if (!activo) return;
-        if (err.estado === 401 || err.estado === 403) {
+
+        const fallo = [resEvidencias, resServicio].find((res) => res.status === 'rejected');
+        if (fallo && (fallo.reason?.estado === 401 || fallo.reason?.estado === 403)) {
           cerrarSesion();
           navigate('/login', { replace: true });
           return;
         }
-        setError(err.message || 'No se pudieron cargar las evidencias.');
+
+        if (resEvidencias.status === 'fulfilled') {
+          const servidor = Array.isArray(resEvidencias.value) ? resEvidencias.value : [];
+          const local = leerBorrador(hoja.id_hoja);
+          const locales = Array.isArray(local?.evidencias) ? local.evidencias : [];
+          const ids = new Set(servidor.map((item) => item.id_evidencia));
+          setEvidencias([
+            ...servidor,
+            ...locales.filter((item) => !ids.has(item.id_evidencia)),
+          ]);
+        }
+        if (resServicio.status === 'fulfilled') {
+          setResumenServicio(resServicio.value);
+        }
       })
       .finally(() => {
         if (activo) setCargando(false);
@@ -118,6 +135,27 @@ export default function EvidenciasFirma() {
       activo = false;
     };
   }, [token, hoja?.id_hoja, navigate]);
+
+  useEffect(() => {
+    if (!hoja?.id_hoja || !navigator.geolocation) return undefined;
+
+    let activo = true;
+    navigator.geolocation.getCurrentPosition(
+      (posicion) => {
+        if (!activo) return;
+        setCoordenadas({
+          latitud: posicion.coords.latitude,
+          longitud: posicion.coords.longitude,
+        });
+      },
+      () => {},
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+
+    return () => {
+      activo = false;
+    };
+  }, [hoja?.id_hoja]);
 
   function puntoDelTrazo(evento) {
     const lienzo = lienzoRef.current;
@@ -184,6 +222,7 @@ export default function EvidenciasFirma() {
     if (!hoja?.id_hoja) return false;
     const { archivo, ...detalles } = cuerpo;
     const idEvidencia = crypto.randomUUID();
+    const fechaCaptura = new Date().toISOString();
 
     setGuardando(true);
     setMensaje('');
@@ -197,6 +236,7 @@ export default function EvidenciasFirma() {
           id_hoja: hoja.id_hoja,
           id_evidencia: idEvidencia,
           archivo,
+          fecha_captura: fechaCaptura,
           latitud: coordenadas?.latitud ?? null,
           longitud: coordenadas?.longitud ?? null,
           ...detalles,
@@ -213,11 +253,29 @@ export default function EvidenciasFirma() {
           longitud: coordenadas?.longitud ?? null,
           dataUrl: archivo,
           sha256: respuesta.sha256 ?? null,
-          fecha_captura: new Date().toISOString(),
+          fecha_captura: fechaCaptura,
           url: respuesta.url ?? null,
           pendiente: Boolean(respuesta.pendiente),
         },
       ]);
+      const local = leerBorrador(hoja.id_hoja);
+      const previas = Array.isArray(local?.evidencias) ? local.evidencias : [];
+      guardarBorrador(hoja.id_hoja, {
+        evidencias: [
+          ...previas.filter((item) => item.id_evidencia !== idEvidencia),
+          {
+            id_evidencia: respuesta.id_evidencia || idEvidencia,
+            tipo: detalles.tipo,
+            fecha_captura: fechaCaptura,
+            latitud: coordenadas?.latitud ?? null,
+            longitud: coordenadas?.longitud ?? null,
+            nombre_firmante: detalles.nombre_firmante || null,
+            rut_firmante: detalles.rut_firmante || null,
+            pendiente: Boolean(respuesta.pendiente),
+          },
+        ],
+        pendiente: Boolean(respuesta.pendiente),
+      });
       setMensaje(
         respuesta.pendiente
           ? 'Evidencia guardada en el equipo. Se enviará al reconectar.'
@@ -289,6 +347,21 @@ export default function EvidenciasFirma() {
 
   const fotos = evidencias.filter((item) => item.tipo === 'foto');
   const firmas = evidencias.filter((item) => item.tipo === 'firma');
+  const respuestasResumen = resumenServicio?.respuestas || [];
+  const respondidasResumen = respuestasResumen.filter((respuesta) => respuesta.resultado).length;
+  const consumosResumen = resumenServicio?.consumos || [];
+
+  function continuarResumen() {
+    if (fotos.length === 0) {
+      setError('Adjunta al menos una fotografía antes de continuar.');
+      return;
+    }
+    if (firmas.length === 0) {
+      setError('Falta la firma del cliente antes de continuar.');
+      return;
+    }
+    navigate('/resumen');
+  }
 
   return (
     <main className="pantalla">
@@ -321,7 +394,15 @@ export default function EvidenciasFirma() {
               <div className="seccion-titulo">
                 <Icono nombre="camara" tamano={20} />
                 Fotografías del servicio
+                <span
+                  className={fotos.length > 0 ? 'pildora pildora-ok' : 'pildora pildora-pendiente'}
+                  style={{ marginLeft: 'auto' }}
+                >
+                  {fotos.length} foto{fotos.length === 1 ? '' : 's'}
+                </span>
               </div>
+
+              <p className="micro">Mínimo una fotografía por servicio.</p>
 
               <div className="fotos-grid">
                 {fotos.map((foto) => (
@@ -365,17 +446,100 @@ export default function EvidenciasFirma() {
                 <Icono nombre="pin" tamano={16} />
                 Adjuntar ubicación actual
               </button>
-              {coordenadas && (
+              {coordenadas ? (
                 <p className="micro" style={{ marginTop: '8px' }}>
                   Ubicación: {coordenadas.latitud.toFixed(5)}, {coordenadas.longitud.toFixed(5)}
                 </p>
+              ) : (
+                <p className="micro" style={{ marginTop: '8px' }}>
+                  Sin ubicación GPS. Puedes adjuntarla manualmente.
+                </p>
+              )}
+
+              {resumenServicio && (
+                <>
+                  <div className="seccion-titulo">
+                    <Icono nombre="resumen" tamano={20} />
+                    Resumen previo a la firma
+                  </div>
+
+                  <p className="tenue">
+                    Revisa estos datos con el cliente antes de pedir la firma.
+                  </p>
+
+                  <div className="resumen-filas">
+                    <div className="fila">
+                      <span>Equipo</span>
+                      <strong>{resumenServicio.orden?.equipo || orden?.equipo || 'No indicado'}</strong>
+                    </div>
+                    <div className="fila">
+                      <span>Orden</span>
+                      <strong>{resumenServicio.orden?.codigo_orden_erp || orden?.codigo_orden_erp || 'Sin código'}</strong>
+                    </div>
+                    <div className="fila">
+                      <span>Cliente</span>
+                      <strong>{resumenServicio.orden?.cliente || orden?.cliente || 'No indicado'}</strong>
+                    </div>
+                    <div className="fila">
+                      <span>Checklist</span>
+                      <strong>
+                        {respondidasResumen} / {respuestasResumen.length} respondidos
+                      </strong>
+                    </div>
+                    <div className="fila">
+                      <span>Materiales</span>
+                      <strong>
+                        {consumosResumen.length}{' '}
+                        {consumosResumen.length === 1 ? 'material' : 'materiales'}
+                      </strong>
+                    </div>
+                    <div className="fila">
+                      <span>Fotografías</span>
+                      <strong>{fotos.length}</strong>
+                    </div>
+                  </div>
+
+                  <details className="detalle-registros">
+                    <summary>Ver checklist y materiales</summary>
+
+                    <h3>Checklist</h3>
+                    {respuestasResumen.length === 0 && (
+                      <p className="tenue">Sin respuestas registradas.</p>
+                    )}
+                    <ul className="lista-simple">
+                      {respuestasResumen.map((respuesta) => (
+                        <li key={respuesta.id_item}>
+                          <strong>{respuesta.pregunta_texto}</strong>
+                          <span className="tenue">
+                            {respuesta.resultado || 'Sin responder'}
+                            {respuesta.observacion ? ` · ${respuesta.observacion}` : ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+
+                    <h3>Materiales</h3>
+                    {consumosResumen.length === 0 && (
+                      <p className="tenue">Sin materiales registrados.</p>
+                    )}
+                    <ul className="consumos">
+                      {consumosResumen.map((consumo) => (
+                        <li key={consumo.id_consumo}>
+                          <span>{consumo.nombre}</span>
+                          <span className="cantidad">
+                            {Number(consumo.cantidad)} {consumo.unidad_medida || ''}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                </>
               )}
 
               <div className="seccion-titulo">
                 <Icono nombre="documento" tamano={20} />
                 Firma de conformidad
               </div>
-
               <form onSubmit={guardarFirma} className="firma-caja">
                 <div className="campo">
                   <label htmlFor="nombre-firmante" className="etiqueta">Nombre de quien firma</label>
@@ -451,7 +615,7 @@ export default function EvidenciasFirma() {
         </div>
       </section>
 
-      <button type="button" className="boton" onClick={() => navigate('/resumen')}>
+      <button type="button" className="boton" onClick={continuarResumen}>
         Revisar Resumen y Sincronizar
         <Icono nombre="flecha-derecha" tamano={18} />
       </button>

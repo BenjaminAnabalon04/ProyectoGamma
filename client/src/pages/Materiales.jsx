@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cerrarSesion, obtenerToken, pedir } from '../api/api';
+import { guardarBorrador, leerBorrador } from '../api/borrador';
 import Icono from '../components/Icono';
 import TarjetaCabecera from '../components/TarjetaCabecera';
 
@@ -37,23 +38,39 @@ export default function Materiales() {
     if (!hoja?.id_hoja) return undefined;
 
     let activo = true;
-    Promise.all([
+    Promise.allSettled([
       pedir(`/materiales/consumos/${hoja.id_hoja}`, { token }),
       pedir('/materiales', { token }),
     ])
-      .then(([datosConsumos, datosMateriales]) => {
+      .then(([resConsumos, resMateriales]) => {
         if (!activo) return;
-        setConsumos(Array.isArray(datosConsumos) ? datosConsumos : []);
-        setMateriales(Array.isArray(datosMateriales) ? datosMateriales : []);
-      })
-      .catch((err) => {
-        if (!activo) return;
-        if (err.estado === 401 || err.estado === 403) {
+        const local = leerBorrador(hoja.id_hoja);
+        const consumosServidor =
+          resConsumos.status === 'fulfilled' && Array.isArray(resConsumos.value)
+            ? resConsumos.value
+            : [];
+        const consumosLocales = Array.isArray(local?.consumos) ? local.consumos : [];
+        const idsServidor = new Set(consumosServidor.map((item) => item.id_consumo));
+        const consumos = [
+          ...consumosServidor,
+          ...consumosLocales.filter((item) => !idsServidor.has(item.id_consumo)),
+        ];
+        setConsumos(consumos);
+        if (resMateriales.status === 'fulfilled') {
+          setMateriales(Array.isArray(resMateriales.value) ? resMateriales.value : []);
+        }
+
+        const fallo = [resConsumos, resMateriales].find((res) => res.status === 'rejected');
+        if (!fallo) return;
+
+        if (fallo.reason?.estado === 401 || fallo.reason?.estado === 403) {
           cerrarSesion();
           navigate('/login', { replace: true });
           return;
         }
-        setError(err.message || 'No se pudieron cargar los materiales.');
+        if (resMateriales.status === 'rejected') {
+          setError('No se pudo cargar el catálogo de materiales sin conexión.');
+        }
       })
       .finally(() => {
         if (activo) setCargando(false);
@@ -97,22 +114,24 @@ export default function Materiales() {
       });
 
       if (respuesta.pendiente) {
-        setConsumos((previo) => [
-          ...previo,
-          {
-            id_consumo: idConsumo,
-            id_material: materialSeleccionado.id_material,
-            nombre: materialSeleccionado.nombre,
-            unidad_medida: materialSeleccionado.unidad_medida,
-            cantidad: valor,
-            fecha_registro: new Date().toISOString(),
-            pendiente: true,
-          },
-        ]);
+        const nuevoConsumo = {
+          id_consumo: idConsumo,
+          id_material: materialSeleccionado.id_material,
+          nombre: materialSeleccionado.nombre,
+          unidad_medida: materialSeleccionado.unidad_medida,
+          cantidad: valor,
+          fecha_registro: new Date().toISOString(),
+          pendiente: true,
+        };
+        const lista = [...consumos, nuevoConsumo];
+        setConsumos(lista);
+        guardarBorrador(hoja.id_hoja, { consumos: lista, pendiente: true });
         setMensaje('Consumo guardado en el equipo. Se enviará al reconectar.');
       } else {
         const actualizados = await pedir(`/materiales/consumos/${hoja.id_hoja}`, { token });
-        setConsumos(Array.isArray(actualizados) ? actualizados : []);
+        const lista = Array.isArray(actualizados) ? actualizados : [];
+        setConsumos(lista);
+        guardarBorrador(hoja.id_hoja, { consumos: lista, pendiente: false });
         setMensaje('Consumo registrado correctamente.');
       }
 

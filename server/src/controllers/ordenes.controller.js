@@ -26,7 +26,8 @@ const CAMPOS_ORDEN = `
   h.estado_envio_erp,
   h.id_hoja AS id_hoja_servicio,
   h.fecha_inicio AS fecha_inicio_servicio,
-  h.fecha_fin AS fecha_fin_servicio
+  h.fecha_fin AS fecha_fin_servicio,
+  pr.estado AS presupuesto_estado
 `;
 
 const UNION_ORDEN = `
@@ -42,14 +43,25 @@ const UNION_ORDEN = `
      ORDER BY hs.fecha_inicio DESC NULLS LAST, hs.id_hoja DESC
      LIMIT 1
   ) h ON TRUE
+  LEFT JOIN LATERAL (
+    SELECT p.estado
+      FROM presupuesto p
+     WHERE p.id_hoja = h.id_hoja
+     ORDER BY p.fecha_creacion DESC
+     LIMIT 1
+  ) pr ON TRUE
 `;
 
 function convertir(fila) {
   let estado = fila.estado;
-  if (fila.estado_envio_erp === 'ENVIADO' || fila.estado_envio_erp === 'SINCRONIZADO') {
-    estado = 'COMPLETADO';
-  } else if (fila.estado_servicio === 'EN_EJECUCION') {
+  if (fila.estado_servicio === 'EN_EJECUCION') {
     estado = 'EN_EJECUCION';
+  } else if (
+    fila.estado_envio_erp === 'ENVIADO' ||
+    fila.estado_envio_erp === 'SINCRONIZADO' ||
+    (fila.estado_servicio === 'FINALIZADO' && fila.presupuesto_estado === 'APROBADO')
+  ) {
+    estado = 'COMPLETADO';
   } else if (fila.estado_servicio === 'FINALIZADO') {
     estado = 'FINALIZADO';
   }
@@ -66,6 +78,7 @@ function convertir(fila) {
     estado,
     estado_servicio: fila.estado_servicio || null,
     estado_envio_erp: fila.estado_envio_erp || null,
+    presupuesto_estado: fila.presupuesto_estado || null,
     id_hoja: fila.id_hoja_servicio || null,
     fecha_inicio_servicio: fila.fecha_inicio_servicio || null,
     fecha_fin_servicio: fila.fecha_fin_servicio || null,

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { API_URL, obtenerToken } from '../api/api';
+import { guardarArchivo, leerArchivo } from '../api/offline';
 
 const MAXIMO_CACHE = 40;
 const cache = new Map();
@@ -26,6 +27,11 @@ export default function ImagenEvidencia({
   const mostrada = dataUrl || cache.get(idEvidencia) || url;
 
   useEffect(() => {
+    if (!dataUrl || !idEvidencia) return;
+    void guardarArchivo(idEvidencia, dataUrl);
+  }, [dataUrl, idEvidencia]);
+
+  useEffect(() => {
     if (dataUrl || !idEvidencia) return undefined;
     if (cache.get(idEvidencia)) return undefined;
 
@@ -45,9 +51,24 @@ export default function ImagenEvidencia({
         guardarEnCache(idEvidencia, nueva);
         setUrl(nueva);
         setError('');
+        void guardarArchivo(idEvidencia, blob);
       })
-      .catch(() => {
-        if (activo) setError('Imagen no disponible');
+      .catch(async () => {
+        const guardada = await leerArchivo(idEvidencia).catch(() => null);
+        if (!activo) return;
+        if (guardada instanceof Blob) {
+          const nueva = URL.createObjectURL(guardada);
+          guardarEnCache(idEvidencia, nueva);
+          setUrl(nueva);
+          setError('');
+          return;
+        }
+        if (typeof guardada === 'string') {
+          setUrl(guardada);
+          setError('');
+          return;
+        }
+        setError('Imagen no disponible');
       });
 
     return () => {

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cerrarSesion, obtenerToken, pedir } from '../api/api';
+import { guardarBorrador, leerBorrador } from '../api/borrador';
 import ChipEstado from '../components/ChipEstado';
 import Icono from '../components/Icono';
 import TarjetaCabecera from '../components/TarjetaCabecera';
@@ -49,6 +50,8 @@ export default function Presupuesto() {
   const [items, setItems] = useState(() => [nuevoItem()]);
   const [presupuestos, setPresupuestos] = useState([]);
   const [consumos, setConsumos] = useState([]);
+  const [materiales, setMateriales] = useState([]);
+  const [idMaterialNuevo, setIdMaterialNuevo] = useState('');
   const [detalleActivo, setDetalleActivo] = useState(null);
   const [creando, setCreando] = useState(false);
   const [cargando, setCargando] = useState(Boolean(hoja?.id_hoja));
@@ -66,17 +69,51 @@ export default function Presupuesto() {
     let activo = true;
     const parametros = new URLSearchParams({ id_hoja: hoja.id_hoja });
 
-    Promise.all([
+    Promise.allSettled([
       pedir(`/presupuestos?${parametros.toString()}`, { token }),
       pedir(`/materiales/consumos/${hoja.id_hoja}`, { token }),
+      pedir('/materiales', { token }),
     ])
-      .then(([datosPresupuestos, datosConsumos]) => {
+      .then(([resPresupuestos, resConsumos, resMateriales]) => {
         if (!activo) return;
-        const lista = Array.isArray(datosPresupuestos) ? datosPresupuestos : [];
-        const materiales = Array.isArray(datosConsumos) ? datosConsumos : [];
+
+        const fallo = [resPresupuestos, resConsumos, resMateriales].find(
+          (res) => res.status === 'rejected'
+        );
+        if (fallo && (fallo.reason?.estado === 401 || fallo.reason?.estado === 403)) {
+          cerrarSesion();
+          navigate('/login', { replace: true });
+          return;
+        }
+
+        const listaServidor =
+          resPresupuestos.status === 'fulfilled' && Array.isArray(resPresupuestos.value)
+            ? resPresupuestos.value
+            : [];
+        const local = leerBorrador(hoja.id_hoja);
+        const listaLocal = Array.isArray(local?.presupuestos) ? local.presupuestos : [];
+        const idsPresupuesto = new Set(listaServidor.map((item) => item.id_presupuesto));
+        const lista = [
+          ...listaServidor,
+          ...listaLocal.filter((item) => !idsPresupuesto.has(item.id_presupuesto)),
+        ];
+        const consumosServidor =
+          resConsumos.status === 'fulfilled' && Array.isArray(resConsumos.value)
+            ? resConsumos.value
+            : [];
+        const localConsumos = Array.isArray(local?.consumos) ? local.consumos : [];
+        const idsConsumo = new Set(consumosServidor.map((item) => item.id_consumo));
+        const materiales = [
+          ...consumosServidor,
+          ...localConsumos.filter((item) => !idsConsumo.has(item.id_consumo)),
+        ];
+
         setPresupuestos(lista);
         setConsumos(materiales);
         setItems(materiales.length > 0 ? materiales.map(itemDesdeConsumo) : [nuevoItem()]);
+        if (resMateriales.status === 'fulfilled') {
+          setMateriales(Array.isArray(resMateriales.value) ? resMateriales.value : []);
+        }
 
         const pendiente = lista.find(
           (presupuesto) => presupuesto.estado === 'ENVIADO' || presupuesto.estado === 'APROBADO'
@@ -88,15 +125,6 @@ export default function Presupuesto() {
             })
             .catch(() => {});
         }
-      })
-      .catch((err) => {
-        if (!activo) return;
-        if (err.estado === 401 || err.estado === 403) {
-          cerrarSesion();
-          navigate('/login', { replace: true });
-          return;
-        }
-        setError(err.message || 'No se pudo cargar el presupuesto del servicio.');
       })
       .finally(() => {
         if (activo) setCargando(false);
@@ -145,10 +173,48 @@ export default function Presupuesto() {
     setMensaje('Ítems actualizados desde los materiales del servicio.');
   }
 
+  function agregarMaterialCatalogo() {
+    const material = materiales.find(
+      (item) => Number(item.id_material) === Number(idMaterialNuevo)
+    );
+    if (!material) {
+      setError('Selecciona un material disponible.');
+      return;
+    }
+
+    setError('');
+    setItems((previo) => {
+      const utiles = previo.filter((item) => item.descripcion.trim() || item.id_material);
+      const existente = utiles.find(
+        (item) => Number(item.id_material) === Number(material.id_material)
+      );
+      if (existente) {
+        return utiles.map((item) =>
+          item.id === existente.id
+            ? { ...item, cantidad: String(Number(item.cantidad || 0) + 1) }
+            : item
+        );
+      }
+      return [
+        ...utiles,
+        {
+          id: crypto.randomUUID(),
+          id_material: material.id_material,
+          descripcion: material.nombre,
+          cantidad: '1',
+          unidad_medida: material.unidad_medida || 'un',
+        },
+      ];
+    });
+    setIdMaterialNuevo('');
+    setMensaje('Material agregado al presupuesto.');
+  }
+
   async function enviarPresupuesto(evento) {
     evento.preventDefault();
     setMensaje('');
     setError('');
+    const idPresupuesto = crypto.randomUUID();
 
     if (!hoja?.id_hoja) {
       setError('Primero inicia el servicio en la ficha de la orden.');
@@ -183,6 +249,7 @@ export default function Presupuesto() {
         metodo: 'POST',
         token,
         cuerpo: {
+          id_presupuesto: idPresupuesto,
           id_hoja: hoja.id_hoja,
           id_orden: orden?.id_orden,
           lugar_trabajo: lugarTrabajo.trim() || null,
@@ -192,13 +259,32 @@ export default function Presupuesto() {
       });
 
       if (respuesta.pendiente) {
+        const nuevo = {
+          id_presupuesto: respuesta.id_presupuesto,
+          estado: respuesta.estado || 'ENVIADO',
+          descripcion: descripcion.trim(),
+          fecha_creacion: new Date().toISOString(),
+          pendiente: true,
+        };
+        const lista = [nuevo, ...presupuestos];
+        setPresupuestos(lista);
+        setCreando(false);
+        guardarBorrador(hoja.id_hoja, {
+          presupuestos: lista,
+          pendiente: true,
+        });
         setMensaje('Presupuesto guardado en el equipo. Se enviará al reconectar.');
       } else {
         setMensaje('Presupuesto del servicio enviado a oficina para su revisión.');
         setCreando(false);
         const parametros = new URLSearchParams({ id_hoja: hoja.id_hoja });
         const actualizados = await pedir(`/presupuestos?${parametros.toString()}`, { token });
-        setPresupuestos(Array.isArray(actualizados) ? actualizados : []);
+        const lista = Array.isArray(actualizados) ? actualizados : [];
+        setPresupuestos(lista);
+        guardarBorrador(hoja.id_hoja, {
+          presupuestos: lista,
+          pendiente: false,
+        });
       }
     } catch (err) {
       setError(err.message || 'No se pudo enviar el presupuesto.');
@@ -318,6 +404,44 @@ export default function Presupuesto() {
                   Actualizar desde materiales
                 </button>
               )}
+
+              <div className="campo" style={{ marginTop: '14px' }}>
+                <label htmlFor="material-catalogo" className="etiqueta">
+                  Agregar material disponible
+                </label>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <select
+                    id="material-catalogo"
+                    value={idMaterialNuevo}
+                    onChange={(evento) => setIdMaterialNuevo(evento.target.value)}
+                    style={{ flex: 1, minWidth: 0 }}
+                  >
+                    <option value="">Selecciona un material</option>
+                    {materiales.map((material) => (
+                      <option key={material.id_material} value={material.id_material}>
+                        {material.nombre} · {material.unidad_medida}
+                        {material.stock_referencial !== undefined
+                          ? ` · Stock ${material.stock_referencial}`
+                          : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="boton boton-ambar boton-compacto"
+                    onClick={agregarMaterialCatalogo}
+                    disabled={!idMaterialNuevo}
+                  >
+                    <Icono nombre="mas" tamano={18} />
+                    Agregar
+                  </button>
+                </div>
+                {materiales.length === 0 && (
+                  <p className="micro" style={{ marginTop: '6px' }}>
+                    No hay catálogo de materiales disponible sin conexión.
+                  </p>
+                )}
+              </div>
 
               <div className="campo" style={{ marginTop: '14px' }}>
                 <label htmlFor="lugar-trabajo" className="etiqueta">Lugar del trabajo</label>

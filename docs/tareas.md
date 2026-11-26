@@ -129,5 +129,3 @@ Desde la raíz:
 
     npm run verificar
 
-Ejecuta la comprobación de comentarios, la revisión de sintaxis del backend, 10 pruebas del
-servidor, 4 pruebas del ERP, el lint y el build del cliente.

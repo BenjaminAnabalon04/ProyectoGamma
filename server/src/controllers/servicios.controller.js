@@ -1,9 +1,30 @@
 // Desarrollado por: Agustín Insunsa
 
 const db = require('../db');
+const fs = require('fs/promises');
+const path = require('path');
 const { esUuid, enteroPositivo, texto, hojaDelTecnico } = require('../utils/validacion');
 
 const RESULTADOS_PERMITIDOS = ['OPERATIVO', 'REQUIERE_SEGUIMIENTO', 'FUERA_DE_SERVICIO'];
+const MIME_EVIDENCIA = {
+  jpg: 'image/jpeg',
+  png: 'image/png',
+  webp: 'image/webp',
+};
+
+async function leerEvidencia(evidencia) {
+  try {
+    const nombre = path.basename(evidencia.clave_archivo);
+    const contenido = await fs.readFile(path.join(process.env.UPLOADS_DIR, nombre));
+    const mime = MIME_EVIDENCIA[evidencia.formato] || 'application/octet-stream';
+    return {
+      ...evidencia,
+      archivo: `data:${mime};base64,${contenido.toString('base64')}`,
+    };
+  } catch {
+    return { ...evidencia, archivo: null };
+  }
+}
 
 function normalizarResultado(valor) {
   const limpio = texto(valor, 30);
@@ -53,6 +74,25 @@ async function iniciar(req, res) {
       Number(asignacion.id_tecnico) !== req.usuario.id_usuario
     ) {
       return res.status(404).json({ mensaje: 'Asignación no encontrada' });
+    }
+
+    const activa = await db.query(
+      `SELECT id_hoja, id_asignacion, id_checklist, estado_servicio, fecha_inicio
+         FROM hoja_servicio
+        WHERE id_asignacion = $1 AND estado_servicio = 'EN_EJECUCION'
+        ORDER BY fecha_inicio DESC NULLS LAST, id_hoja DESC
+        LIMIT 1`,
+      [idAsignacion]
+    );
+    if (activa.rows.length > 0) {
+      const hoja = activa.rows[0];
+      if (hoja.id_hoja !== id_hoja) {
+        return res.status(409).json({
+          mensaje: 'Esta orden ya tiene un servicio en ejecución',
+          id_hoja: hoja.id_hoja,
+        });
+      }
+      return res.json(respuestaHoja(hoja));
     }
 
     const existente = await db.query(
@@ -207,35 +247,54 @@ async function finalizar(req, res) {
     const presupuestos = await db.query(
       `SELECT estado
          FROM presupuesto
-        WHERE id_hoja = $1`,
+        WHERE id_hoja = $1
+        ORDER BY fecha_creacion DESC`,
       [hoja.id_hoja]
     );
-    if (
-      presupuestos.rows.length > 0 &&
-      !presupuestos.rows.some((fila) => fila.estado === 'APROBADO')
-    ) {
+    if (presupuestos.rows[0]?.estado === 'RECHAZADO') {
       return res.status(409).json({
-        mensaje: 'El presupuesto del servicio debe ser aprobado por la oficina antes de finalizar.',
-        estado_presupuesto: presupuestos.rows[0].estado,
+        mensaje: 'El presupuesto del servicio fue rechazado. Crea uno nuevo antes de finalizar.',
+        estado_presupuesto: 'RECHAZADO',
+        faltantes: ['presupuesto aprobado o pendiente de la oficina'],
       });
     }
 
-    const faltantesRes = await db.query(
-      `SELECT i.pregunta
-         FROM item_checklist i
-         LEFT JOIN respuesta_checklist r
-                ON r.id_item = i.id_item AND r.id_hoja = $1
-        WHERE i.id_checklist = $2
-          AND i.obligatorio = TRUE
-          AND (r.resultado IS NULL OR TRIM(r.resultado) = '')
-        ORDER BY i.orden`,
-      [hoja.id_hoja, hoja.id_checklist]
-    );
+    const actividadesLimpias = texto(actividades, 4000);
+    const faltantes = [];
+    if (!actividadesLimpias) faltantes.push('actividades realizadas');
+    if (!resultadoValidado.valor) faltantes.push('resultado del servicio');
 
-    if (faltantesRes.rows.length > 0) {
+    const [faltantesRes, conteoEvidencias] = await Promise.all([
+      db.query(
+        `SELECT i.pregunta
+           FROM item_checklist i
+           LEFT JOIN respuesta_checklist r
+                  ON r.id_item = i.id_item AND r.id_hoja = $1
+          WHERE i.id_checklist = $2
+            AND i.obligatorio = TRUE
+            AND (r.resultado IS NULL OR TRIM(r.resultado) = '')
+          ORDER BY i.orden`,
+        [hoja.id_hoja, hoja.id_checklist]
+      ),
+      db.query(
+        `SELECT COUNT(*) FILTER (WHERE tipo = 'foto')::int  AS fotos,
+                COUNT(*) FILTER (WHERE tipo = 'firma')::int AS firmas
+           FROM evidencia
+          WHERE id_hoja = $1`,
+        [hoja.id_hoja]
+      ),
+    ]);
+
+    faltantes.push(...faltantesRes.rows.map((fila) => fila.pregunta));
+    const fotos = conteoEvidencias.rows[0]?.fotos || 0;
+    const firmas = conteoEvidencias.rows[0]?.firmas || 0;
+    if (fotos < 1) faltantes.push('al menos una fotografía');
+    if (firmas < 1) faltantes.push('la firma del cliente');
+
+    if (faltantes.length > 0) {
       return res.status(400).json({
-        mensaje: 'Faltan ítems obligatorios del checklist',
-        faltantes: faltantesRes.rows.map((fila) => fila.pregunta),
+        mensaje: 'Faltan datos obligatorios para finalizar el servicio',
+        faltantes,
       });
     }
 
@@ -246,13 +305,14 @@ async function finalizar(req, res) {
               horometro_servicio = $2,
               actividades = $3,
               observaciones_tecnicas = $4,
-              resultado = $5
+              resultado = $5,
+              version = version + 1
         WHERE id_hoja = $1
         RETURNING estado_servicio, fecha_fin, horometro_servicio, resultado`,
       [
         hoja.id_hoja,
         horometro,
-        texto(actividades, 4000),
+        actividadesLimpias,
         texto(observaciones_tecnicas, 4000),
         resultadoValidado.valor,
       ]
@@ -352,7 +412,7 @@ async function enviar(req, res) {
       ...completo.rows[0],
       respuestas: respuestas.rows,
       consumos: consumos.rows,
-      evidencias: evidencias.rows,
+      evidencias: await Promise.all(evidencias.rows.map(leerEvidencia)),
     };
 
     let respuestaErp;

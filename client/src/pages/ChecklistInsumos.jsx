@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cerrarSesion, obtenerToken, pedir } from '../api/api';
+import { guardarBorrador, leerBorrador } from '../api/borrador';
 import Icono from '../components/Icono';
 import TarjetaCabecera from '../components/TarjetaCabecera';
 
@@ -31,6 +32,7 @@ export default function ChecklistInsumos() {
   const [cargando, setCargando] = useState(Boolean(hoja?.id_hoja));
   const [guardando, setGuardando] = useState(false);
   const [mensaje, setMensaje] = useState('');
+  const [mensajeAuto, setMensajeAuto] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -43,7 +45,19 @@ export default function ChecklistInsumos() {
     let activo = true;
     const parametros = new URLSearchParams({ id_hoja: hoja.id_hoja });
 
-    pedir(`/checklists?${parametros.toString()}`, { token })
+    async function cargarPlantilla() {
+      try {
+        return await pedir(`/checklists?${parametros.toString()}`, { token });
+      } catch (err) {
+        if (err.estado === 0 && orden?.tipo_servicio) {
+          const respaldo = `tipo_servicio=${encodeURIComponent(orden.tipo_servicio)}`;
+          return pedir(`/checklists?${respaldo}`, { token });
+        }
+        throw err;
+      }
+    }
+
+    cargarPlantilla()
       .then((datosChecklist) => {
         if (!activo) return;
         setPlantilla(datosChecklist);
@@ -63,6 +77,16 @@ export default function ChecklistInsumos() {
             observacion: respuesta.observacion || '',
           };
         });
+        const local = leerBorrador(hoja.id_hoja);
+        if (local?.pendiente) {
+          (local.respuestas || []).forEach((respuesta) => {
+            mapa[respuesta.id_item] = {
+              id_item: respuesta.id_item,
+              resultado: respuesta.resultado || '',
+              observacion: respuesta.observacion || '',
+            };
+          });
+        }
         setRespuestas(mapa);
       })
       .catch((err) => {
@@ -81,10 +105,48 @@ export default function ChecklistInsumos() {
     return () => {
       activo = false;
     };
-  }, [token, hoja?.id_hoja, navigate]);
+  }, [token, hoja?.id_hoja, navigate, orden?.tipo_servicio]);
+
+  async function guardarRespuesta(idItem, resultado, observacion) {
+    if (!hoja?.id_hoja) return;
+
+    setMensajeAuto('');
+    setGuardando(true);
+    try {
+      const respuesta = await pedir(`/checklists/respuestas/${hoja.id_hoja}`, {
+        metodo: 'PUT',
+        token,
+        cuerpo: {
+          respuestas: [{ id_item: idItem, resultado, observacion }],
+        },
+      });
+      setMensajeAuto(
+        respuesta.pendiente
+          ? 'Guardado en el equipo. Se enviará al reconectar.'
+          : 'Guardado automáticamente.'
+      );
+      const lista = Object.values({
+        ...respuestas,
+        [idItem]: { id_item: idItem, resultado, observacion },
+      }).map((item) => ({
+        id_item: item.id_item,
+        resultado: item.resultado || '',
+        observacion: item.observacion || '',
+      }));
+      guardarBorrador(hoja.id_hoja, {
+        respuestas: lista,
+        pendiente: Boolean(respuesta.pendiente),
+      });
+    } catch (err) {
+      setError(err.message || 'No se pudo guardar esta respuesta.');
+    } finally {
+      setGuardando(false);
+    }
+  }
 
   function cambiarResultado(idItem, valor) {
     setMensaje('');
+    setMensajeAuto('');
     setError('');
     setRespuestas((previo) => ({
       ...previo,
@@ -94,10 +156,13 @@ export default function ChecklistInsumos() {
         observacion: previo[idItem]?.observacion || '',
       },
     }));
+    void guardarRespuesta(idItem, valor, respuestas[idItem]?.observacion || '');
   }
 
   function cambiarObservacion(idItem, texto) {
     setMensaje('');
+    setMensajeAuto('');
+    setError('');
     setRespuestas((previo) => ({
       ...previo,
       [idItem]: {
@@ -111,6 +176,7 @@ export default function ChecklistInsumos() {
   async function guardarChecklist(evento) {
     evento.preventDefault();
     setMensaje('');
+    setMensajeAuto('');
     setError('');
 
     const faltantes = (plantilla?.items || []).filter(
@@ -139,6 +205,10 @@ export default function ChecklistInsumos() {
           ? 'Checklist guardado en el equipo. Se enviará al reconectar.'
           : `Checklist guardado (${respuesta.guardadas ?? lista.length} respuestas).`
       );
+      guardarBorrador(hoja.id_hoja, {
+        respuestas: lista,
+        pendiente: Boolean(respuesta.pendiente),
+      });
     } catch (err) {
       setError(err.message || 'No se pudieron guardar las respuestas.');
     } finally {
@@ -160,6 +230,12 @@ export default function ChecklistInsumos() {
           {plantilla && (
             <p className="micro">
               Plantilla {plantilla.nombre} · versión {plantilla.version}
+            </p>
+          )}
+          {guardando && <p className="micro">Guardando...</p>}
+          {!guardando && mensajeAuto && (
+            <p className="micro ok" role="status" aria-live="polite">
+              {mensajeAuto}
             </p>
           )}
 
@@ -214,6 +290,13 @@ export default function ChecklistInsumos() {
                         type="text"
                         value={actual.observacion}
                         onChange={(evento) => cambiarObservacion(item.id_item, evento.target.value)}
+                        onBlur={(evento) =>
+                          void guardarRespuesta(
+                            item.id_item,
+                            actual.resultado || '',
+                            evento.target.value
+                          )
+                        }
                         placeholder="Observación (opcional)"
                         aria-label={`Observación de ${item.pregunta}`}
                       />

@@ -109,7 +109,7 @@ npm run verificar
 ```
 
 Ese comando revisa que no haya comentarios sin autoría, valida la sintaxis de todos los `.js`,
-ejecuta las 10 pruebas del backend, las 4 del ERP, el lint del cliente y el build de producción.
+ejecuta las 13 pruebas del backend, las 4 del ERP, el lint del cliente y el build de producción.
 
 ## Despliegue
 

@@ -128,6 +128,9 @@ async function registrarEvidencia(req, res) {
 
   const extension = detectado;
   const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+  const fechaSolicitada = req.body?.fecha_captura ? new Date(req.body.fecha_captura) : null;
+  const fechaCaptura =
+    fechaSolicitada && !Number.isNaN(fechaSolicitada.getTime()) ? fechaSolicitada : new Date();
 
   try {
     const hoja = await hojaDelTecnico(db, id_hoja, req.usuario.id_usuario);
@@ -157,8 +160,8 @@ async function registrarEvidencia(req, res) {
       const insercion = await db.query(
         `INSERT INTO evidencia
            (id_evidencia, id_hoja, id_usuario, tipo, clave_archivo, formato,
-            latitud, longitud, nombre_firmante, rut_firmante, estado_carga, sha256)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'GUARDADO', $11)
+            latitud, longitud, nombre_firmante, rut_firmante, estado_carga, sha256, fecha_captura)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'GUARDADO', $11, $12)
          RETURNING id_evidencia, id_hoja, tipo, clave_archivo, formato, sha256, fecha_captura`,
         [
           idEvidencia,
@@ -172,6 +175,7 @@ async function registrarEvidencia(req, res) {
           nombreFirmante,
           rutFirmante,
           sha256,
+          fechaCaptura,
         ]
       );
       return res.status(201).json(responderEvidencia(insercion.rows[0]));

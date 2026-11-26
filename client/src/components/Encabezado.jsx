@@ -45,13 +45,25 @@ export default function Encabezado() {
             <span className="marca-logo">
               <Icono nombre="camion" tamano={26} />
             </span>
-            FYAG Movilidad
+            <span className="marca-texto">FYAG Movilidad</span>
           </Link>
 
           <div className="barra-acciones">
             <span className={enLinea ? 'pildora-red' : 'pildora-red sin-red'}>
               {enLinea ? 'En línea' : 'Sin conexión'}
             </span>
+
+            {autenticado && (
+              <Link
+                to="/mis-trabajos"
+                className="boton-barra"
+                aria-label="Mis trabajos"
+                title="Mis trabajos"
+              >
+                <Icono nombre="trabajos" tamano={18} />
+                <span className="texto-boton">Mis trabajos</span>
+              </Link>
+            )}
 
             <Link
               to="/pendientes"

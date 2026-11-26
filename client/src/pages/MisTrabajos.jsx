@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { cerrarSesion, obtenerToken, obtenerUsuario, pedir } from '../api/api';
+import { borrarHojaActual, cerrarSesion, guardarHojaActual, obtenerToken, obtenerUsuario, pedir, precargarDatosOffline } from '../api/api';
+import { leerBorrador } from '../api/borrador';
 import ChipEstado from '../components/ChipEstado';
 import Icono from '../components/Icono';
 
@@ -41,7 +42,7 @@ export default function MisTrabajos() {
     async function cargarOrdenes() {
       try {
         const datos = await pedir('/ordenes', { token });
-        setOrdenes(Array.isArray(datos) ? datos : []);
+        void precargarDatosOffline(datos);
 
         let guardada = null;
         let previa = null;
@@ -56,27 +57,86 @@ export default function MisTrabajos() {
         }
 
         const candidata = guardada || previa;
+        const usarLocal = Boolean(candidata?.pendiente);
+        const datosConLocal = (Array.isArray(datos) ? datos : []).map((orden) => {
+          if (
+            !candidata ||
+            !usarLocal ||
+            Number(orden.id_asignacion) !== Number(candidata.id_asignacion)
+          ) {
+            return orden;
+          }
+          if (
+            orden.estado_servicio === 'EN_EJECUCION' &&
+            orden.presupuesto_estado === 'RECHAZADO'
+          ) {
+            return orden;
+          }
+
+          const rango = {
+            PENDIENTE: 0,
+            EN_EJECUCION: 1,
+            FINALIZADO: 2,
+            COMPLETADO: 3,
+          };
+          const estadoLocal =
+            candidata.estado_envio_erp === 'ENVIADO' ||
+            candidata.estado_envio_erp === 'SINCRONIZADO'
+              ? 'COMPLETADO'
+              : candidata.estado_servicio;
+          const estadoServidor = orden.estado;
+          const estado =
+            (rango[estadoLocal] ?? 0) > (rango[estadoServidor] ?? 0)
+              ? estadoLocal
+              : estadoServidor;
+          const usaEstadoLocal = (rango[estadoLocal] ?? 0) > (rango[estadoServidor] ?? 0);
+
+          return {
+            ...orden,
+            id_hoja: usaEstadoLocal ? candidata.id_hoja : orden.id_hoja,
+            estado,
+            estado_servicio: estado === 'COMPLETADO' ? 'FINALIZADO' : estado,
+            estado_envio_erp:
+              orden.estado_envio_erp === 'ENVIADO' ||
+              orden.estado_envio_erp === 'SINCRONIZADO'
+                ? orden.estado_envio_erp
+                : candidata.estado_envio_erp || orden.estado_envio_erp,
+          };
+        });
+        setOrdenes(datosConLocal);
+
         const ordenCandidata = candidata
-          ? datos.find((orden) => orden.id_hoja === candidata.id_hoja)
+          ? datosConLocal.find((orden) => orden.id_hoja === candidata.id_hoja)
+          : null;
+        const ordenAsignacion = candidata
+          ? datosConLocal.find((orden) => Number(orden.id_asignacion) === Number(candidata.id_asignacion))
           : null;
         const activa =
-          datos.find((orden) => orden.id_hoja && orden.estado_servicio === 'EN_EJECUCION') ||
-          datos.find((orden) => orden.id_hoja);
+          datosConLocal.find((orden) => orden.id_hoja && orden.estado_servicio === 'EN_EJECUCION') ||
+          datosConLocal.find((orden) => orden.id_hoja);
 
-        const restaurar = ordenCandidata || activa;
+        const restaurar = ordenCandidata || (candidata?.pendiente && ordenAsignacion
+          ? {
+              ...ordenAsignacion,
+              id_hoja: candidata.id_hoja,
+              estado_servicio: candidata.estado_servicio || ordenAsignacion.estado_servicio,
+              estado_envio_erp: candidata.estado_envio_erp || ordenAsignacion.estado_envio_erp,
+              pendiente: candidata.pendiente,
+            }
+          : null) || activa;
         if (restaurar) {
-          localStorage.setItem(
-            'hoja_actual',
-            JSON.stringify({
-              id_hoja: restaurar.id_hoja,
-              id_asignacion: restaurar.id_asignacion,
-              estado_servicio: restaurar.estado_servicio,
-              estado_envio_erp: restaurar.estado_envio_erp,
-            })
-          );
+          const borrador = leerBorrador(restaurar.id_hoja) || {};
+          guardarHojaActual({
+            ...borrador,
+            id_hoja: restaurar.id_hoja,
+            id_asignacion: restaurar.id_asignacion,
+            estado_servicio: restaurar.estado_servicio || borrador.estado_servicio,
+            estado_envio_erp: restaurar.estado_envio_erp || borrador.estado_envio_erp,
+            pendiente: restaurar.pendiente ?? candidata?.pendiente ?? borrador.pendiente ?? false,
+          });
           localStorage.setItem('orden_actual', JSON.stringify(restaurar));
         } else {
-          localStorage.removeItem('hoja_actual');
+          borrarHojaActual();
           localStorage.removeItem('orden_actual');
           if (usuario?.id_usuario) {
             localStorage.removeItem(`hoja_usuario_${usuario.id_usuario}`);
@@ -98,6 +158,16 @@ export default function MisTrabajos() {
     void cargarOrdenes();
   }, [token, navigate, usuario?.id_usuario]);
 
+  useEffect(() => {
+    const actualizar = () => {
+      void pedir('/ordenes', { token })
+        .then((datos) => setOrdenes(Array.isArray(datos) ? datos : []))
+        .catch(() => {});
+    };
+    window.addEventListener('gamma:ordenes', actualizar);
+    return () => window.removeEventListener('gamma:ordenes', actualizar);
+  }, [token]);
+
   function abrirOrden(orden) {
     localStorage.setItem('orden_actual', JSON.stringify(orden));
     navigate('/orden', { state: { orden } });
@@ -106,6 +176,12 @@ export default function MisTrabajos() {
   const asignadas = ordenes.length;
   const enProceso = ordenes.filter((orden) => orden.estado === 'EN_EJECUCION').length;
   const completadas = ordenes.filter((orden) => orden.estado === 'COMPLETADO').length;
+  const ordenesOrdenadas = [...ordenes].sort((uno, otro) => {
+    const fechaUno = uno.fecha_programada ? new Date(uno.fecha_programada).getTime() : Infinity;
+    const fechaOtro = otro.fecha_programada ? new Date(otro.fecha_programada).getTime() : Infinity;
+    if (fechaUno === fechaOtro) return uno.id_orden - otro.id_orden;
+    return fechaUno - fechaOtro;
+  });
 
   return (
     <main className="pantalla">
@@ -149,7 +225,7 @@ export default function MisTrabajos() {
       )}
 
       <ul className="lista-ordenes">
-        {ordenes.map((orden) => (
+        {ordenesOrdenadas.map((orden) => (
           <li
             key={orden.id_orden}
             className={orden.estado === 'EN_EJECUCION' ? 'orden activa' : 'orden'}

@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { obtenerToken, pedir } from '../api/api';
+import { actualizarOrdenEnCache, borrarHojaActual, guardarHojaActual, obtenerToken, pedir } from '../api/api';
+import { borrarBorrador, guardarBorrador, leerBorrador } from '../api/borrador';
 import ChipEstado from '../components/ChipEstado';
 import Icono from '../components/Icono';
 import TarjetaCabecera from '../components/TarjetaCabecera';
@@ -13,7 +14,9 @@ function leerOrden(location) {
 
 function leerHoja(orden) {
   const guardada = JSON.parse(localStorage.getItem('hoja_actual') || 'null');
-  return guardada && orden && guardada.id_asignacion === orden.id_asignacion ? guardada : null;
+  if (!guardada || !orden || guardada.id_asignacion !== orden.id_asignacion) return null;
+  const borrador = leerBorrador(guardada.id_hoja) || {};
+  return { ...borrador, ...guardada, id_asignacion: orden.id_asignacion };
 }
 
 function numero(valor, sufijo = '') {
@@ -76,13 +79,19 @@ export default function DetalleOrden() {
   const pendienteLocal = hoja?.pendiente;
   const enviado =
     hoja?.estado_envio_erp === 'ENVIADO' || hoja?.estado_envio_erp === 'SINCRONIZADO';
-  const presupuestoAprobado = presupuestos.some(
-    (presupuesto) => presupuesto.estado === 'APROBADO'
-  );
-  const presupuestoPendiente = presupuestos.some(
-    (presupuesto) => presupuesto.estado === 'ENVIADO' || presupuesto.estado === 'EN_COSTEO'
-  );
-  const requiereAprobacion = presupuestos.length > 0 && !presupuestoAprobado;
+  const presupuestoUltimo = presupuestos.reduce((ultimo, actual) => {
+    if (!ultimo) return actual;
+    return new Date(actual.fecha_creacion || 0) >= new Date(ultimo.fecha_creacion || 0)
+      ? actual
+      : ultimo;
+  }, null);
+  const presupuestoAprobado = presupuestoUltimo?.estado === 'APROBADO';
+  const presupuestoPendiente =
+    presupuestoUltimo?.estado === 'ENVIADO' || presupuestoUltimo?.estado === 'EN_COSTEO';
+  const requiereAprobacion = presupuestoUltimo?.estado === 'RECHAZADO';
+  const completado =
+    hoja?.estado_servicio === 'FINALIZADO' &&
+    (enviado || presupuestoAprobado);
 
   useEffect(() => {
     if (!orden) {
@@ -99,14 +108,33 @@ export default function DetalleOrden() {
       try {
         const datos = await pedir(`/servicios/${idHoja}`, { token });
         if (!activo) return;
+        const local = leerBorrador(idHoja);
+        const presupuestoRechazado = Array.isArray(datos.presupuestos)
+          ? datos.presupuestos.some((presupuesto) => presupuesto.estado === 'RECHAZADO')
+          : false;
+        const servidorReabierto =
+          datos.estado_servicio === 'EN_EJECUCION' && presupuestoRechazado;
         const actualizada = {
           ...datos,
+          ...(local?.pendiente && !servidorReabierto ? local : {}),
           id_asignacion: orden.id_asignacion,
-          pendiente: pendienteLocal,
+          pendiente: servidorReabierto
+            ? false
+            : local?.pendiente ?? pendienteLocal,
         };
         setHoja(actualizada);
-        setPresupuestos(Array.isArray(datos.presupuestos) ? datos.presupuestos : []);
-        localStorage.setItem('hoja_actual', JSON.stringify(actualizada));
+        if (servidorReabierto) {
+          guardarBorrador(idHoja, {
+            estado_servicio: 'EN_EJECUCION',
+            estado_envio_erp: datos.estado_envio_erp,
+            fecha_fin: datos.fecha_fin,
+            pendiente: false,
+          });
+        }
+        const listaServidor = Array.isArray(datos.presupuestos) ? datos.presupuestos : [];
+        const listaLocal = Array.isArray(local?.presupuestos) ? local.presupuestos : [];
+        setPresupuestos(listaServidor.length > 0 ? listaServidor : listaLocal);
+        guardarHojaActual(actualizada);
         setActividades(datos.actividades || '');
         setObservaciones(datos.observaciones_tecnicas || '');
         setHorometro(
@@ -119,7 +147,10 @@ export default function DetalleOrden() {
       } catch (err) {
         if (!activo) return;
         if (err.estado === 404) {
-          localStorage.removeItem('hoja_actual');
+          const local = leerBorrador(idHoja);
+          if (local?.pendiente || pendienteLocal) return;
+          borrarHojaActual();
+          borrarBorrador(idHoja);
           setHoja(null);
         }
       }
@@ -130,6 +161,18 @@ export default function DetalleOrden() {
       activo = false;
     };
   }, [hoja?.id_hoja, pendienteLocal, orden, token]);
+  useEffect(() => {
+    if (!orden) return undefined;
+    const actualizar = () => {
+      const local = leerHoja(orden);
+      if (!local) return;
+      setHoja(local);
+      if (Array.isArray(local.presupuestos)) setPresupuestos(local.presupuestos);
+    };
+    window.addEventListener('gamma:hoja', actualizar);
+    return () => window.removeEventListener('gamma:hoja', actualizar);
+  }, [orden]);
+
   if (!orden) return null;
 
   async function iniciarServicio() {
@@ -151,7 +194,26 @@ export default function DetalleOrden() {
       };
       setHoja(nuevaHoja);
       setPresupuestos([]);
-      localStorage.setItem('hoja_actual', JSON.stringify(nuevaHoja));
+      guardarHojaActual(nuevaHoja);
+      guardarBorrador(nuevaHoja.id_hoja, {
+        id_asignacion: orden.id_asignacion,
+        estado_servicio: 'EN_EJECUCION',
+        estado_envio_erp: 'PENDIENTE',
+        fecha_inicio: nuevaHoja.fecha_inicio,
+        pendiente: Boolean(datos.pendiente),
+        orden,
+        respuestas: [],
+        consumos: [],
+        evidencias: [],
+        presupuestos: [],
+      });
+      void actualizarOrdenEnCache(orden.id_asignacion, {
+        id_hoja: nuevaHoja.id_hoja,
+        estado: 'EN_EJECUCION',
+        estado_servicio: 'EN_EJECUCION',
+        estado_envio_erp: 'PENDIENTE',
+        fecha_inicio_servicio: nuevaHoja.fecha_inicio,
+      });
       setHorometro(
         datos.horometro_servicio ??
           (orden.horometro_actual === null || orden.horometro_actual === undefined
@@ -160,10 +222,84 @@ export default function DetalleOrden() {
       );
       setMensaje(datos.pendiente ? 'Servicio registrado; se enviará al reconectar.' : 'Servicio iniciado correctamente.');
     } catch (err) {
+      if (err.estado === 409 && err.datos?.id_hoja) {
+        try {
+          const datos = await pedir(`/servicios/${err.datos.id_hoja}`, { token });
+          const recuperada = {
+            ...datos,
+            id_asignacion: orden.id_asignacion,
+          };
+          setHoja(recuperada);
+          setPresupuestos(Array.isArray(datos.presupuestos) ? datos.presupuestos : []);
+          guardarHojaActual(recuperada);
+          guardarBorrador(recuperada.id_hoja, { ...datos, pendiente: false });
+          setMensaje('Se recuperó el servicio que ya estaba en ejecución.');
+          return;
+        } catch {
+          setError(err.message || 'Esta orden ya tiene un servicio en ejecución.');
+          return;
+        }
+      }
       setError(err.message || 'No se pudo iniciar el servicio.');
     } finally {
       setCargando(false);
     }
+  }
+
+  async function faltantesFinalizacion() {
+    const local = leerBorrador(hoja.id_hoja) || {};
+    const usarLocal = Boolean(local.pendiente);
+    const respuestas = usarLocal && Array.isArray(local.respuestas)
+      ? local.respuestas
+      : Array.isArray(hoja.respuestas)
+        ? hoja.respuestas
+        : [];
+    const evidencias = usarLocal && Array.isArray(local.evidencias)
+      ? local.evidencias
+      : Array.isArray(hoja.evidencias)
+        ? hoja.evidencias
+        : [];
+    const listaPresupuestos = presupuestos;
+
+    const faltantes = [];
+    if (!actividades.trim()) faltantes.push('actividades realizadas');
+    if (!resultado) faltantes.push('resultado del servicio');
+
+    const plantilla = await pedir(
+      `/checklists?tipo_servicio=${encodeURIComponent(orden.tipo_servicio || '')}`,
+      { token }
+    ).catch(() => null);
+
+    if (!plantilla) {
+      faltantes.push('plantilla del checklist disponible');
+    } else {
+      const resultados = new Map(
+        respuestas.map((respuesta) => [Number(respuesta.id_item), respuesta.resultado || ''])
+      );
+      for (const item of plantilla.items || []) {
+        if (item.obligatorio && !String(resultados.get(Number(item.id_item)) || '').trim()) {
+          faltantes.push(item.pregunta);
+        }
+      }
+    }
+
+    if (!evidencias.some((evidencia) => evidencia.tipo === 'foto')) {
+      faltantes.push('al menos una fotografía');
+    }
+    if (!evidencias.some((evidencia) => evidencia.tipo === 'firma')) {
+      faltantes.push('la firma del cliente');
+    }
+    const presupuestoRechazado = listaPresupuestos.reduce((ultimo, actual) => {
+      if (!ultimo) return actual;
+      return new Date(actual.fecha_creacion || 0) >= new Date(ultimo.fecha_creacion || 0)
+        ? actual
+        : ultimo;
+    }, null);
+    if (presupuestoRechazado?.estado === 'RECHAZADO') {
+      faltantes.push('crear un nuevo presupuesto o esperar la aprobación');
+    }
+
+    return faltantes;
   }
 
   async function finalizarServicio(evento) {
@@ -175,6 +311,12 @@ export default function DetalleOrden() {
     setCargando(true);
 
     try {
+      const faltantes = await faltantesFinalizacion();
+      if (faltantes.length > 0) {
+        setError(`No puedes finalizar todavía: ${faltantes.join(', ')}.`);
+        return;
+      }
+
       const datos = await pedir(`/servicios/${hoja.id_hoja}/finalizar`, {
         metodo: 'PUT',
         token,
@@ -193,9 +335,25 @@ export default function DetalleOrden() {
         horometro_servicio:
           datos.horometro_servicio ?? (horometro === '' ? null : Number(horometro)),
         resultado: datos.resultado || resultado,
+        pendiente: Boolean(datos.pendiente),
       };
       setHoja(finalizada);
-      localStorage.setItem('hoja_actual', JSON.stringify(finalizada));
+      guardarHojaActual(finalizada);
+      guardarBorrador(finalizada.id_hoja, {
+        estado_servicio: 'FINALIZADO',
+        estado_envio_erp: 'PENDIENTE',
+        fecha_fin: finalizada.fecha_fin,
+        horometro_servicio: finalizada.horometro_servicio,
+        actividades,
+        observaciones_tecnicas: observaciones,
+        resultado: finalizada.resultado,
+        pendiente: Boolean(datos.pendiente),
+      });
+      void actualizarOrdenEnCache(orden.id_asignacion, {
+        estado: 'FINALIZADO',
+        estado_servicio: 'FINALIZADO',
+        fecha_fin_servicio: finalizada.fecha_fin,
+      });
       setMensaje('Servicio finalizado. Puedes continuar al resumen y envío.');
     } catch (err) {
       setError(err.message || 'Faltan datos obligatorios para finalizar.');
@@ -267,7 +425,7 @@ export default function DetalleOrden() {
               <ChipEstado
                 estado={
                   hoja
-                    ? hoja.estado_envio_erp === 'ENVIADO' || hoja.estado_envio_erp === 'SINCRONIZADO'
+                    ? completado
                       ? 'COMPLETADO'
                       : hoja.estado_servicio
                     : orden.estado
@@ -308,9 +466,9 @@ export default function DetalleOrden() {
               }
             >
               {presupuestoAprobado
-                ? 'Presupuesto aprobado por la oficina. Puedes finalizar el servicio.'
+                ? 'Presupuesto aprobado por la oficina. Servicio completado.'
                 : presupuestoPendiente
-                  ? 'Presupuesto enviado al ERP. Debes esperar la aprobación antes de finalizar.'
+                  ? 'Presupuesto pendiente. Puedes finalizar; la oficina lo revisará al sincronizar.'
                   : 'Presupuesto rechazado. Crea uno nuevo desde Presupuesto antes de finalizar.'}
             </p>
           )}
@@ -331,7 +489,7 @@ export default function DetalleOrden() {
         </button>
       )}
 
-      {hoja && !enviado && (
+      {hoja && !completado && (
         <>
           <div className="seccion-titulo">
             <Icono nombre="checklist" tamano={20} />
@@ -404,7 +562,7 @@ export default function DetalleOrden() {
 
               {requiereAprobacion && (
                 <p className="mensaje mensaje-alerta" style={{ marginBottom: 0 }}>
-                  No puedes finalizar hasta que la oficina apruebe el presupuesto del servicio.
+                  El presupuesto fue rechazado. Crea uno nuevo o espera la aprobación de la oficina.
                 </p>
               )}
 
@@ -416,11 +574,19 @@ export default function DetalleOrden() {
         </>
       )}
 
-      {hoja && hoja.estado_servicio === 'FINALIZADO' && (
+      {hoja && hoja.estado_servicio === 'FINALIZADO' && !completado && (
         <button type="button" className="boton boton-verde" onClick={() => navigate('/resumen')}>
           <Icono nombre="flecha-derecha" tamano={18} />
           Ir a resumen y envío
         </button>
+      )}
+
+      {completado && (
+        <p className="mensaje mensaje-ok" role="status">
+          {enviado
+            ? 'Servicio completado y enviado al ERP.'
+            : 'Servicio completado con presupuesto aprobado.'}
+        </p>
       )}
 
       <button

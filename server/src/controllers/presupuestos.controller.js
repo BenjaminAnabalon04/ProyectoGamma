@@ -99,12 +99,16 @@ async function listarPresupuestos(req, res) {
 async function crearPresupuesto(req, res) {
   let idOrden = enteroPositivo(req.body?.id_orden);
   const idHoja = texto(req.body?.id_hoja, 60);
+  const idPresupuesto = texto(req.body?.id_presupuesto, 60);
   const lugar = texto(req.body?.lugar_trabajo, 200);
   const descripcion = texto(req.body?.descripcion, 4000);
   const items = req.body?.items;
 
   if (idHoja && !esUuid(idHoja)) {
     return res.status(400).json({ mensaje: 'id_hoja no es válido' });
+  }
+  if (idPresupuesto && !esUuid(idPresupuesto)) {
+    return res.status(400).json({ mensaje: 'id_presupuesto no es válido' });
   }
   if (!idHoja && !idOrden) {
     return res.status(400).json({ mensaje: 'Debes indicar una orden o una hoja de servicio válida' });
@@ -138,6 +142,26 @@ async function crearPresupuesto(req, res) {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
+
+    if (idPresupuesto) {
+      const previo = await client.query(
+        `SELECT id_presupuesto, id_hoja, estado, fecha_creacion
+           FROM presupuesto
+          WHERE id_presupuesto = $1`,
+        [idPresupuesto]
+      );
+      if (previo.rows.length > 0) {
+        const fila = previo.rows[0];
+        if (idHoja && fila.id_hoja && fila.id_hoja !== idHoja) {
+          await client.query('ROLLBACK');
+          return res
+            .status(409)
+            .json({ mensaje: 'Ese id_presupuesto ya pertenece a otro servicio' });
+        }
+        await client.query('ROLLBACK');
+        return res.json(fila);
+      }
+    }
 
     if (idHoja) {
       const hoja = await hojaDelTecnico(client, idHoja, req.usuario.id_usuario);
@@ -199,7 +223,7 @@ async function crearPresupuesto(req, res) {
          FROM orden_trabajo o
         WHERE o.id_orden = $6
         RETURNING id_presupuesto, id_hoja, estado, fecha_creacion`,
-      [crypto.randomUUID(), idHoja || null, req.usuario.id_usuario, lugar, descripcion, idOrden]
+      [idPresupuesto || crypto.randomUUID(), idHoja || null, req.usuario.id_usuario, lugar, descripcion, idOrden]
     );
 
     for (const detalle of detalles) {
@@ -302,7 +326,7 @@ async function resolverPresupuesto(req, res, aprobado) {
     await client.query('BEGIN');
 
     const presupuesto = await client.query(
-      `SELECT id_presupuesto, estado
+      `SELECT id_presupuesto, id_hoja, estado
          FROM presupuesto
         WHERE id_presupuesto = $1
         FOR UPDATE`,
@@ -355,6 +379,21 @@ async function resolverPresupuesto(req, res, aprobado) {
         observacion,
       ]
     );
+
+    const idHoja = presupuesto.rows[0].id_hoja;
+    if (!aprobado && idHoja) {
+      await client.query(
+        `UPDATE hoja_servicio
+            SET estado_servicio = 'EN_EJECUCION',
+                fecha_fin = NULL,
+                estado_envio_erp = 'PENDIENTE',
+                codigo_hoja_erp = NULL,
+                fecha_envio_erp = NULL,
+                version = version + 1
+          WHERE id_hoja = $1`,
+        [idHoja]
+      );
+    }
 
     await client.query('COMMIT');
     return res.json(actualizado.rows[0]);

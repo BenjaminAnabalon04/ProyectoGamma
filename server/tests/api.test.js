@@ -115,6 +115,42 @@ test('HU-07: el listado marca completado cuando la hoja fue enviada al ERP', asy
   assert.equal(res.datos[0].fecha_fin_servicio, '2026-01-01T11:00:00.000Z');
 });
 
+test('HU-08: un presupuesto aprobado con el servicio finalizado marca la orden como completada', async () => {
+  const db = dbConConsultas([
+    {
+      contiene: 'FROM asignacion a',
+      rows: [
+        {
+          id_orden: '3',
+          id_asignacion: '7',
+          codigo_orden_erp: 'OT-8844',
+          titulo: 'Revisión',
+          descripcion: 'Revisión general',
+          tipo_servicio: 'Mantención',
+          prioridad: 'ALTA',
+          fecha_programada: null,
+          estado: 'PENDIENTE',
+          estado_servicio: 'FINALIZADO',
+          estado_envio_erp: 'PENDIENTE',
+          presupuesto_estado: 'APROBADO',
+          cliente: 'Cliente de prueba',
+          equipo: 'Equipo de prueba',
+          codigo_qr_equipo: 'QR-EQ-001',
+        },
+      ],
+    },
+  ]);
+  const { misTrabajos } = cargar('src/controllers/ordenes.controller.js', db);
+  const res = responder();
+
+  await misTrabajos({ usuario: TOKEN }, res);
+  await res.terminado;
+
+  assert.equal(res.codigo, 200);
+  assert.equal(res.datos[0].estado, 'COMPLETADO');
+  assert.equal(res.datos[0].presupuesto_estado, 'APROBADO');
+});
+
 test('HU-03: iniciar servicio crea la hoja con el UUID del celular', async () => {
   const db = dbConConsultas([
     {
@@ -149,6 +185,50 @@ test('HU-03: iniciar servicio crea la hoja con el UUID del celular', async () =>
   assert.equal(res.codigo, 201);
   assert.equal(res.datos.id_hoja, ID_HOJA);
   assert.equal(res.datos.id_checklist, 1);
+});
+
+test('HU-03: finalizar exige datos obligatorios antes de cerrar el servicio', async () => {
+  const db = dbConConsultas([
+    {
+      contiene: 'FROM hoja_servicio hs',
+      rows: [
+        {
+          id_hoja: ID_HOJA,
+          id_checklist: '1',
+          id_asignacion: '7',
+          estado_servicio: 'EN_EJECUCION',
+          estado_envio_erp: 'PENDIENTE',
+          id_tecnico: '1',
+          codigo_orden_erp: 'OT-8844',
+          titulo: 'Revisión',
+          tipo_servicio: 'Mantención',
+          id_orden: '3',
+        },
+      ],
+    },
+    { contiene: 'FROM presupuesto', rows: [] },
+    { contiene: 'FROM item_checklist', rows: [{ pregunta: '¿Conexiones en buen estado?' }] },
+    { contiene: 'FROM evidencia', rows: [{ fotos: 0, firmas: 0 }] },
+  ]);
+  const { finalizar } = cargar('src/controllers/servicios.controller.js', db);
+  const res = responder();
+
+  await finalizar(
+    {
+      usuario: TOKEN,
+      params: { id_hoja: ID_HOJA },
+      body: { actividades: '', resultado: '' },
+    },
+    res
+  );
+  await res.terminado;
+
+  assert.equal(res.codigo, 400);
+  assert.ok(res.datos.faltantes.includes('actividades realizadas'));
+  assert.ok(res.datos.faltantes.includes('resultado del servicio'));
+  assert.ok(res.datos.faltantes.includes('¿Conexiones en buen estado?'));
+  assert.ok(res.datos.faltantes.includes('al menos una fotografía'));
+  assert.ok(res.datos.faltantes.includes('la firma del cliente'));
 });
 
 test('HU-04: guardar respuestas valida que los ítems pertenezcan a la hoja', async () => {
